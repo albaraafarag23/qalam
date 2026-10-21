@@ -157,6 +157,39 @@ fn light_marks(marks: &str, confidence: f32, next_letter: Option<char>, word_end
     if implied { "" } else { marks }
 }
 
+/// Two spelling rules every Arabic writer follows, applied to the model's marks:
+/// - a bare alef (ا ى آ) never carries a حركة;
+/// - a word-final ي that the model gave a كسرة or ضمة is a long vowel: it takes no mark and
+///   the letter before it takes a كسرة (اسْمَيِ → اسْمِي). ي with شدة or سكون is left alone.
+fn fix_spelling_rules(chars: &[char], marks: &mut [Option<String>], owner: &[Option<usize>]) {
+    for (p, o) in owner.iter().enumerate() {
+        let Some(i) = *o else { continue };
+        match chars[i] {
+            'ا' | 'ى' | 'آ' => {
+                if let Some(m) = marks[i].as_mut() {
+                    m.clear();
+                }
+            }
+            'ي' => {
+                let word_end = owner.get(p + 1).copied().flatten().is_none();
+                let prev = if p > 0 { owner[p - 1] } else { None };
+                let is_short_vowel = |m: &str| m == "\u{0650}" || m == "\u{064F}";
+                if let (true, Some(j), Some(m)) = (word_end, prev, marks[i].as_deref()) {
+                    if is_short_vowel(m) {
+                        marks[i] = Some(String::new());
+                        if let Some(pm) = marks[j].as_mut() {
+                            if !pm.contains('\u{0651}') {
+                                *pm = "\u{0650}".to_string();
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 impl Model {
     fn load(dir: &PathBuf, runtime: &PathBuf) -> Result<Self, String> {
         let fail = |e: String| format!("Couldn't load the offline model: {e}");
@@ -220,6 +253,7 @@ impl Model {
         }
 
         let mut marks: Vec<Option<String>> = vec![None; chars.len()];
+        let mut confidence: Vec<f32> = vec![0.0; chars.len()];
         let mut start = 0;
         while start < ids.len() {
             // Cut at the last space within the limit, so no word is split.
@@ -229,18 +263,26 @@ impl Model {
                     end = start + space;
                 }
             }
-            for (k, (tag, confidence)) in self.predict(&ids[start..end])?.into_iter().enumerate() {
-                let p = start + k;
-                if let Some(i) = owner[p] {
-                    let m = TAG_MARKS[tag];
-                    let next = owner.get(p + 1).copied().flatten().map(|j| chars[j]);
-                    let kept = if light { light_marks(m, confidence, next, next.is_none()) } else { m };
-                    marks[i] = Some(kept.to_string());
+            for (k, (tag, conf)) in self.predict(&ids[start..end])?.into_iter().enumerate() {
+                if let Some(i) = owner[start + k] {
+                    marks[i] = Some(TAG_MARKS[tag].to_string());
+                    confidence[i] = conf;
                 }
             }
             start = end;
             while ids.get(start) == Some(&SPACE_ID) {
                 start += 1;
+            }
+        }
+
+        // Spelling rules first, on the full prediction; light mode then thins it out.
+        fix_spelling_rules(&chars, &mut marks, &owner);
+        if light {
+            for (p, o) in owner.iter().enumerate() {
+                let Some(i) = *o else { continue };
+                let next = owner.get(p + 1).copied().flatten().map(|j| chars[j]);
+                let kept = light_marks(marks[i].as_deref().unwrap_or(""), confidence[i], next, next.is_none());
+                marks[i] = Some(kept.to_string());
             }
         }
 
@@ -320,5 +362,19 @@ mod light_samples {
         for s in ["انا اسمي البراء وحيد وأكتب في قلم كل يوم", "علم المعلم الطلاب درسا جديدا عن تاريخ العرب", "ذهب الطالب إلى المدرسة في الصباح الباكر"] {
             println!("full : {}\nlight: {}\n", m.diacritize(s, false).unwrap(), m.diacritize(s, true).unwrap());
         }
+    }
+}
+
+#[cfg(test)]
+mod user_sample {
+    use super::*;
+    #[test]
+    fn print_user_sentence() {
+        let Ok(dir) = std::env::var("QALAM_TEST_MODEL") else { return };
+        let runtime = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("onnxruntime/libonnxruntime.so");
+        let mut m = Model::load(&PathBuf::from(dir), &runtime).unwrap();
+        let s = "انا اسمي البراء وجيد من مصر عايش في الامارات";
+        println!("FULL={}", m.diacritize(s, false).unwrap());
+        println!("LIGHT={}", m.diacritize(s, true).unwrap());
     }
 }
