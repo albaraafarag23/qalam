@@ -1,27 +1,10 @@
 /* Arabic document fonts. Arabic letters are drawn much smaller than Latin ones at the
    same font-size, so each face is scaled with size-adjust to sit evenly next to the
    English serif. unicode-range keeps them to Arabic, so Latin falls through to
-   Noto Serif. (Noto Naskh was dropped: it draws final ي without dots, "اسمى", and its
+   Noto Serif. Spaces (U+0020, U+00A0) must come from the Arabic face too: drawn in the
+   serif, they split Arabic text into separate runs that WebKit lines up at different
+   heights once size-adjust is applied, so words visibly jump above and below the line. (Noto Naskh was dropped: it draws final ي without dots, "اسمى", and its
    مي ligature dips below the line.) */
-
-@font-face {
-  font-family: "Qalam Scheherazade";
-  font-weight: 400;
-  font-display: swap;
-  size-adjust: 128%;
-  unicode-range: U+0600-06FF, U+0750-077F, U+0870-088E, U+0890-0891, U+0898-08E1, U+08E3-08FF,
-    U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC;
-  src: url("../node_modules/@fontsource/scheherazade-new/files/scheherazade-new-arabic-400-normal.woff2") format("woff2");
-}
-@font-face {
-  font-family: "Qalam Scheherazade";
-  font-weight: 700;
-  font-display: swap;
-  size-adjust: 128%;
-  unicode-range: U+0600-06FF, U+0750-077F, U+0870-088E, U+0890-0891, U+0898-08E1, U+08E3-08FF,
-    U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC;
-  src: url("../node_modules/@fontsource/scheherazade-new/files/scheherazade-new-arabic-700-normal.woff2") format("woff2");
-}
 
 @font-face {
   font-family: "Qalam Amiri";
@@ -29,7 +12,8 @@
   font-display: swap;
   size-adjust: 130%;
   unicode-range: U+0600-06FF, U+0750-077F, U+0870-088E, U+0890-0891, U+0898-08E1, U+08E3-08FF,
-    U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC;
+    U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC,
+    U+0020, U+00A0;
   src: url("../node_modules/@fontsource/amiri/files/amiri-arabic-400-normal.woff2") format("woff2");
 }
 @font-face {
@@ -38,6 +22,28 @@
   font-display: swap;
   size-adjust: 130%;
   unicode-range: U+0600-06FF, U+0750-077F, U+0870-088E, U+0890-0891, U+0898-08E1, U+08E3-08FF,
-    U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC;
+    U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC,
+    U+0020, U+00A0;
   src: url("../node_modules/@fontsource/amiri/files/amiri-arabic-700-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Qalam Vazirmatn";
+  font-weight: 400;
+  font-display: swap;
+  size-adjust: 108%;
+  unicode-range: U+0600-06FF, U+0750-077F, U+0870-088E, U+0890-0891, U+0898-08E1, U+08E3-08FF,
+    U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC,
+    U+0020, U+00A0;
+  src: url("../node_modules/@fontsource/vazirmatn/files/vazirmatn-arabic-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Qalam Vazirmatn";
+  font-weight: 700;
+  font-display: swap;
+  size-adjust: 108%;
+  unicode-range: U+0600-06FF, U+0750-077F, U+0870-088E, U+0890-0891, U+0898-08E1, U+08E3-08FF,
+    U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC,
+    U+0020, U+00A0;
+  src: url("../node_modules/@fontsource/vazirmatn/files/vazirmatn-arabic-700-normal.woff2") format("woff2");
 }

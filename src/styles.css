@@ -9,7 +9,7 @@
 
   /* Arabic glyphs come from the chosen Arabic face, Latin from Noto Serif: the Arabic
      faces are limited to Arabic code points (see fonts.css). */
-  --arabic-font: "Qalam Scheherazade";
+  --arabic-font: "Qalam Vazirmatn";
   --doc-font: var(--arabic-font), "Noto Serif", serif;
   --ui-font: "IBM Plex Sans Arabic", system-ui, sans-serif;
 }

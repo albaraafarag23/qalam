@@ -154,16 +154,16 @@ function updateStatus() {
   document.getElementById("dir")!.textContent = dir === "rtl" ? "العربية" : dir === "ltr" ? "English" : "";
 }
 
-// Arabic document font: Scheherazade New by default, Amiri as the classic alternative.
-const ARABIC_FONTS = ["scheherazade", "amiri"];
+// Arabic document font: Vazirmatn by default (flat, even baseline), Amiri as the classic alternative.
+const ARABIC_FONTS = ["vazirmatn", "amiri"];
 const fontPicker = document.getElementById("arabic-font") as HTMLSelectElement;
 function setArabicFont(name: string) {
-  if (!ARABIC_FONTS.includes(name)) name = "scheherazade";
+  if (!ARABIC_FONTS.includes(name)) name = "vazirmatn";
   document.documentElement.dataset.arabicFont = name;
   fontPicker.value = name;
   try { localStorage.setItem("qalam.arabicFont", name); } catch {}
 }
-let savedFont = "scheherazade";
+let savedFont = "vazirmatn";
 try { savedFont = localStorage.getItem("qalam.arabicFont") ?? savedFont; } catch {}
 setArabicFont(savedFont);
 fontPicker.addEventListener("change", () => {

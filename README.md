@@ -7,7 +7,7 @@ A writing app for Arabic and English. It proofreads both languages as you type, 
 ## What works so far
 
 - Arabic and English in the same document: each paragraph and list sets its own direction (right-to-left or left-to-right) from its text, with no toggle.
-- Arabic fonts that sit evenly beside English text: Scheherazade New (default) and Amiri, built into the app.
+- Arabic fonts that sit evenly beside English text, even with حركات: Vazirmatn (default, modern) and Amiri (classic), built into the app.
 - حركات (Arabic diacritics): a toolbar and shortcuts (Alt+1 to Alt+8) that put a mark on the letter you just typed. A new vowel replaces the old one, and شدة combines with a vowel.
 - Headings, bold, italic, and bulleted and numbered lists. Arabic lists count ١ ٢ ٣.
 - Automatic تشكيل (button شكّل, Ctrl+Shift+T), light or full, shown as a preview first:
@@ -37,4 +37,4 @@ The offline models (72 MB for تشكيل, 210 MB for punctuation) are downloaded
 
 ## Licence of bundled fonts
 
-Scheherazade New, Amiri, Noto Serif and IBM Plex Sans Arabic are released under the SIL Open Font License.
+Vazirmatn, Amiri, Noto Serif and IBM Plex Sans Arabic are released under the SIL Open Font License.
