@@ -179,7 +179,8 @@ body { display: flex; flex-direction: column; }
   line-height: 2.1;
 }
 .preview-body p { margin: 0 0 0.4em; }
-.preview-body .changed { background: color-mix(in srgb, var(--accent) 18%, transparent); border-radius: 3px; }
+/* Whole changed words; no padding or border, which would split the word's shaping. */
+.preview-body .changed { background: color-mix(in srgb, var(--accent) 18%, transparent); }
 .preview-actions, .settings-actions { display: flex; gap: 8px; }
 .preview-actions button, .settings-actions button {
   height: 32px;

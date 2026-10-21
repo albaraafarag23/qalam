@@ -130,19 +130,37 @@ export function applyResults(state: EditorState, ts: Target[], results: string[]
 
 const escape = (s: string) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]!);
 
-/** The paragraph as it will read after applying, with each changed letter highlighted. */
+/**
+ * The paragraph as it will read after applying, with each changed word highlighted.
+ * Whole words, never single letters: wrapping a letter in its own element stops the
+ * browser joining it to its neighbours, and the word falls apart (عَ ا يِ ش).
+ */
 export function previewHtml(t: Target, result: string, keepExisting: boolean): string {
   const byLetter = new Map<number, MarkEdit>();
   for (const e of alignMarks(t.text, result, keepExisting).edits) {
     if (e.from - 1 >= t.from && e.from - 1 < t.to) byLetter.set(e.from - 1, e);
   }
-  let html = "";
+  // The text after applying, plus for each output character whether it belongs to a
+  // changed word.
+  let after = "";
+  const changedAt: boolean[] = [];
   for (let i = 0; i < t.text.length; i++) {
     const e = byLetter.get(i);
-    if (e) {
-      html += `<span class="changed">${escape(t.text[i] + e.marks)}</span>`;
-      i = e.to - 1; // skip the old marks
-    } else html += escape(t.text[i]);
+    const piece = e ? t.text[i] + e.marks : t.text[i];
+    after += piece;
+    for (const _ of piece) changedAt.push(!!e);
+    if (e) i = e.to - 1; // skip the old marks
   }
-  return html;
+  return after
+    .split(/(\s+)/)
+    .reduce<{ html: string; pos: number }>(
+      ({ html, pos }, part) => {
+        const changed = /\S/.test(part) && changedAt.slice(pos, pos + part.length).some(Boolean);
+        return {
+          html: html + (changed ? `<span class="changed">${escape(part)}</span>` : escape(part)),
+          pos: pos + part.length,
+        };
+      },
+      { html: "", pos: 0 },
+    ).html;
 }
