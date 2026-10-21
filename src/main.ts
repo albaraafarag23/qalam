@@ -16,6 +16,7 @@ import { inputRules, wrappingInputRule, textblockTypeInputRule } from "prosemirr
 import { splitListItem, liftListItem, sinkListItem, wrapInList } from "prosemirror-schema-list";
 import { schema } from "./editor/schema";
 import { blockDirection, textDirection } from "./editor/direction";
+import { HARAKAT, activeHarakat, clearHarakat, setHaraka } from "./editor/harakat";
 
 const { nodes, marks } = schema;
 
@@ -65,6 +66,9 @@ const state = EditorState.create({
       "Mod-Alt-1": commands.h1,
       "Mod-Alt-2": commands.h2,
       "Mod-Alt-0": commands.p,
+      // Alt+1…8 put a حركة on the letter before the cursor, Alt+0 clears them.
+      ...Object.fromEntries(HARAKAT.map((h) => [`Alt-${h.key}`, setHaraka(h.mark)])),
+      "Alt-0": clearHarakat,
       Enter: splitListItem(nodes.list_item),
       Tab: sinkListItem(nodes.list_item),
       "Shift-Tab": liftListItem(nodes.list_item),
@@ -82,6 +86,21 @@ const view = new EditorView(document.getElementById("page")!, {
   },
 });
 
+const harakatBar = document.getElementById("harakat")!;
+for (const h of HARAKAT) {
+  const btn = document.createElement("button");
+  btn.className = "haraka";
+  btn.dataset.mark = h.mark;
+  btn.textContent = "\u0628" + h.mark; // shown on ب, as in Arabic teaching books: بَ
+  btn.title = `${h.name} (Alt+${h.key})`;
+  btn.addEventListener("mousedown", (e) => e.preventDefault());
+  btn.addEventListener("click", () => {
+    setHaraka(h.mark)(view.state, view.dispatch, view);
+    view.focus();
+  });
+  harakatBar.appendChild(btn);
+}
+
 document.querySelectorAll<HTMLButtonElement>("[data-cmd]").forEach((btn) => {
   btn.addEventListener("mousedown", (e) => e.preventDefault()); // keep the text selection
   btn.addEventListener("click", () => {
@@ -94,6 +113,11 @@ function updateStatus() {
   const text = view.state.doc.textContent.trim();
   const words = text ? text.split(/\s+/).length : 0;
   document.getElementById("words")!.textContent = `${words} ${words === 1 ? "word" : "words"}`;
+
+  const marks = activeHarakat(view.state);
+  harakatBar.querySelectorAll<HTMLButtonElement>(".haraka").forEach((b) => {
+    b.classList.toggle("active", marks.includes(b.dataset.mark!));
+  });
 
   const dir = textDirection(view.state.selection.$from.parent.textContent);
   document.getElementById("dir")!.textContent = dir === "rtl" ? "العربية" : dir === "ltr" ? "English" : "";

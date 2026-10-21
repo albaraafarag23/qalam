@@ -74,6 +74,18 @@ body { display: flex; flex-direction: column; }
   font: inherit;
   font-size: 13px;
 }
+.harakat { display: flex; gap: 2px; }
+/* Each mark is shown on ب; the tall line box keeps marks above and below the letter
+   (كسرة, تنوين كسر) inside the button. */
+.tools button.haraka {
+  min-width: 30px;
+  height: 34px;
+  padding: 0 4px;
+  font-family: var(--arabic-font), serif;
+  font-size: 17px;
+  line-height: 30px;
+}
+.tools button.active { background: var(--accent); color: var(--paper); }
 .sep { width: 1px; height: 18px; background: var(--rule); margin: 0 6px; }
 
 .desk { flex: 1; overflow-y: auto; padding: 40px 16px 80px; }
