@@ -15,6 +15,7 @@
 }
 
 :root[data-arabic-font="vazirmatn"] { --arabic-font: "Qalam Vazirmatn"; }
+:root[data-arabic-font="scheherazade"] { --arabic-font: "Qalam Scheherazade"; }
 
 @media (prefers-color-scheme: dark) {
   :root {

@@ -156,8 +156,11 @@ function updateStatus() {
 }
 
 // Arabic document font: Amiri by default, Vazirmatn as the modern, flat alternative.
-const ARABIC_FONTS = ["amiri", "vazirmatn"];
+// Scheherazade only on Windows: Linux's WebKitGTK makes its words with حركات jump off the line.
+const onWindows = navigator.userAgent.includes("Windows");
+const ARABIC_FONTS = onWindows ? ["amiri", "vazirmatn", "scheherazade"] : ["amiri", "vazirmatn"];
 const fontPicker = document.getElementById("arabic-font") as HTMLSelectElement;
+if (!onWindows) fontPicker.querySelector('option[value="scheherazade"]')?.remove();
 function setArabicFont(name: string) {
   if (!ARABIC_FONTS.includes(name)) name = "amiri";
   document.documentElement.dataset.arabicFont = name;
