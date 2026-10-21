@@ -21,17 +21,50 @@
         <button data-cmd="ol" title="Numbered list">1.</button>
         <span class="sep"></span>
         <div class="harakat" id="harakat" dir="rtl" title="الحركات"></div>
+        <button id="tashkeel" class="tashkeel" title="تشكيل تلقائي للفقرة أو النص المحدد (Ctrl+Shift+T)">شكّل</button>
+        <select id="tashkeel-mode" title="مستوى التشكيل">
+          <option value="light">خفيف</option>
+          <option value="full">كامل</option>
+        </select>
         <span class="sep"></span>
         <select id="arabic-font" title="Arabic font">
           <option value="scheherazade">شهرزاد · Scheherazade</option>
           <option value="amiri">أميري · Amiri</option>
         </select>
       </div>
+      <button id="open-settings" class="icon-button" title="Settings">⚙</button>
     </header>
 
     <main class="desk">
       <article id="page" class="page"></article>
     </main>
+
+    <section id="preview" class="preview" hidden>
+      <div class="preview-head">
+        <span id="preview-title">التشكيل المقترح</span>
+        <span id="preview-note" class="note"></span>
+      </div>
+      <div id="preview-body" class="preview-body" dir="rtl"></div>
+      <div class="preview-actions">
+        <button id="preview-accept" class="primary">قبول · Accept</button>
+        <button id="preview-cancel">إلغاء · Cancel</button>
+      </div>
+    </section>
+
+    <dialog id="settings" class="settings">
+      <h2>Settings · الإعدادات</h2>
+      <label for="api-key">Claude API key</label>
+      <p class="hint">Used for automatic تشكيل. It's stored in your system's keyring and only sent to Anthropic.
+        Get one at console.anthropic.com → API Keys.</p>
+      <input id="api-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-…" />
+      <p id="key-status" class="hint"></p>
+      <div class="settings-actions">
+        <button id="key-remove">Remove key</button>
+        <span class="grow"></span>
+        <button id="settings-close">Close</button>
+        <button id="key-save" class="primary">Save</button>
+      </div>
+    </dialog>
 
     <footer class="status">
       <span id="words">0 words</span>

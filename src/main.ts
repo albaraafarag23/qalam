@@ -17,6 +17,8 @@ import { splitListItem, liftListItem, sinkListItem, wrapInList } from "prosemirr
 import { schema } from "./editor/schema";
 import { blockDirection, textDirection } from "./editor/direction";
 import { HARAKAT, activeHarakat, clearHarakat, setHaraka } from "./editor/harakat";
+import { applyResults, previewHtml, targets, type Target } from "./editor/tashkeel";
+import { invoke } from "@tauri-apps/api/core";
 
 const { nodes, marks } = schema;
 
@@ -69,6 +71,10 @@ const state = EditorState.create({
       // Alt+1…8 put a حركة on the letter before the cursor, Alt+0 clears them.
       ...Object.fromEntries(HARAKAT.map((h) => [`Alt-${h.key}`, setHaraka(h.mark)])),
       "Alt-0": clearHarakat,
+      "Mod-Shift-t": () => {
+        runTashkeel();
+        return true;
+      },
       Enter: splitListItem(nodes.list_item),
       Tab: sinkListItem(nodes.list_item),
       "Shift-Tab": liftListItem(nodes.list_item),
@@ -139,6 +145,117 @@ fontPicker.addEventListener("change", () => {
   setArabicFont(fontPicker.value);
   view.focus();
 });
+
+// ---- Automatic تشكيل ----
+const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+const tashkeelBtn = $<HTMLButtonElement>("tashkeel");
+const modePicker = $<HTMLSelectElement>("tashkeel-mode");
+const preview = $("preview");
+const settings = $<HTMLDialogElement>("settings");
+
+try { modePicker.value = localStorage.getItem("qalam.tashkeelMode") ?? "light"; } catch {}
+modePicker.addEventListener("change", () => {
+  try { localStorage.setItem("qalam.tashkeelMode", modePicker.value); } catch {}
+  view.focus();
+});
+
+let pending: { ts: Target[]; results: string[]; keepExisting: boolean; doc: typeof view.state.doc } | null = null;
+
+async function runTashkeel() {
+  if (tashkeelBtn.disabled) return;
+  const ts = targets(view.state);
+  if (!ts.length) {
+    showNote("لا يوجد نص عربي هنا · No Arabic text here");
+    return;
+  }
+  if (!(await invoke<boolean>("has_api_key"))) {
+    openSettings("Add your Claude API key to use automatic تشكيل.");
+    return;
+  }
+  const mode = modePicker.value;
+  tashkeelBtn.disabled = true;
+  tashkeelBtn.textContent = "…";
+  try {
+    const results = await invoke<string[]>("diacritize", { paragraphs: ts.map((t) => t.text), mode });
+    showPreview(ts, results, mode === "light");
+  } catch (e) {
+    showNote(String(e));
+  } finally {
+    tashkeelBtn.disabled = false;
+    tashkeelBtn.textContent = "شكّل";
+  }
+}
+
+function showPreview(ts: Target[], results: string[], keepExisting: boolean) {
+  const { changed, skipped } = applyResults(view.state, ts, results, keepExisting);
+  pending = { ts, results, keepExisting, doc: view.state.doc };
+  $("preview-body").innerHTML = ts.map((t, i) => `<p>${previewHtml(t, results[i], keepExisting)}</p>`).join("");
+  $("preview-title").textContent = changed ? "التشكيل المقترح" : "لا تغييرات مقترحة · Nothing to change";
+  $("preview-note").textContent = skipped
+    ? `${skipped} ${skipped === 1 ? "word was" : "words were"} left as typed (the AI tried to change letters)`
+    : "";
+  $<HTMLButtonElement>("preview-accept").hidden = !changed;
+  preview.hidden = false;
+}
+
+function closePreview() {
+  preview.hidden = true;
+  pending = null;
+  view.focus();
+}
+
+$("preview-accept").addEventListener("click", () => {
+  // If the text changed while the preview was open, the positions no longer line up.
+  if (pending && pending.doc.eq(view.state.doc)) {
+    view.dispatch(applyResults(view.state, pending.ts, pending.results, pending.keepExisting).tr.scrollIntoView());
+  } else if (pending) showNote("The text changed meanwhile. Press شكّل again.");
+  closePreview();
+});
+$("preview-cancel").addEventListener("click", closePreview);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !preview.hidden) closePreview();
+});
+
+tashkeelBtn.addEventListener("mousedown", (e) => e.preventDefault());
+tashkeelBtn.addEventListener("click", () => runTashkeel());
+
+function showNote(text: string) {
+  $("preview-title").textContent = text;
+  $("preview-note").textContent = "";
+  $("preview-body").innerHTML = "";
+  $<HTMLButtonElement>("preview-accept").hidden = true;
+  pending = null;
+  preview.hidden = false;
+}
+
+// ---- Settings: the Claude API key ----
+async function refreshKeyStatus(message?: string) {
+  const has = await invoke<boolean>("has_api_key");
+  $("key-status").textContent = message ?? (has ? "✓ A key is saved." : "No key saved yet.");
+  $<HTMLButtonElement>("key-remove").disabled = !has;
+}
+function openSettings(message?: string) {
+  $<HTMLInputElement>("api-key").value = "";
+  refreshKeyStatus(message);
+  settings.showModal();
+}
+$("open-settings").addEventListener("click", () => openSettings());
+$("settings-close").addEventListener("click", () => settings.close());
+$("key-save").addEventListener("click", async () => {
+  const input = $<HTMLInputElement>("api-key");
+  try {
+    await invoke("set_api_key", { key: input.value });
+    input.value = "";
+    refreshKeyStatus("✓ Saved.");
+  } catch (e) {
+    refreshKeyStatus(String(e));
+  }
+});
+$("key-remove").addEventListener("click", async () => {
+  await invoke("clear_api_key");
+  refreshKeyStatus("Key removed.");
+});
+settings.addEventListener("close", () => view.focus());
 
 updateStatus();
 view.focus();
