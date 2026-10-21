@@ -7,7 +7,7 @@ import "./fonts.css";
 import "prosemirror-view/style/prosemirror.css";
 import "./styles.css";
 
-import { EditorState, type Command } from "prosemirror-state";
+import { EditorState, Selection, type Command } from "prosemirror-state";
 import { EditorView } from "prosemirror-view";
 import { baseKeymap, setBlockType, toggleMark } from "prosemirror-commands";
 import { history, undo, redo, closeHistory } from "prosemirror-history";
@@ -142,6 +142,24 @@ for (const h of HARAKAT) {
   });
   harakatBar.appendChild(btn);
 }
+
+// The editable area is only as tall as the text, so a click on the empty part of the
+// sheet (or the desk around it) would miss it. Put the cursor at the nearest text instead.
+document.querySelector(".desk")!.addEventListener("mousedown", (e) => {
+  const event = e as MouseEvent;
+  if (event.button !== 0 || view.dom.contains(event.target as Node)) return;
+  event.preventDefault();
+  const box = view.dom.getBoundingClientRect();
+  const left = Math.min(Math.max(event.clientX, box.left + 1), box.right - 1);
+  const top = Math.min(Math.max(event.clientY, box.top + 1), box.bottom - 1);
+  const pos = view.posAtCoords({ left, top })?.pos;
+  const { doc, tr } = view.state;
+  const selection = pos === undefined || event.clientY > box.bottom
+    ? Selection.atEnd(doc)
+    : Selection.near(doc.resolve(pos));
+  view.dispatch(tr.setSelection(selection).scrollIntoView());
+  view.focus();
+});
 
 document.querySelectorAll<HTMLButtonElement>("[data-cmd]").forEach((btn) => {
   btn.addEventListener("mousedown", (e) => e.preventDefault()); // keep the text selection
