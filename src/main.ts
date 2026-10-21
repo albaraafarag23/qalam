@@ -19,6 +19,7 @@ import { blockDirection, textDirection } from "./editor/direction";
 import { HARAKAT, activeHarakat, clearHarakat, setHaraka } from "./editor/harakat";
 import { applyResults, previewHtml, targets, type Target } from "./editor/tashkeel";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 const { nodes, marks } = schema;
 
@@ -161,6 +162,8 @@ modePicker.addEventListener("change", () => {
 
 let pending: { ts: Target[]; results: string[]; keepExisting: boolean; doc: typeof view.state.doc } | null = null;
 
+// Claude when there's an API key (best accuracy), otherwise the offline CATT model; if
+// Claude fails (no internet, rate limit), fall back to offline automatically.
 async function runTashkeel() {
   if (tashkeelBtn.disabled) return;
   const ts = targets(view.state);
@@ -168,16 +171,27 @@ async function runTashkeel() {
     showNote("لا يوجد نص عربي هنا · No Arabic text here");
     return;
   }
-  if (!(await invoke<boolean>("has_api_key"))) {
-    openSettings("Add your Claude API key to use automatic تشكيل.");
-    return;
-  }
   const mode = modePicker.value;
+  const paragraphs = ts.map((t) => t.text);
   tashkeelBtn.disabled = true;
   tashkeelBtn.textContent = "…";
   try {
-    const results = await invoke<string[]>("diacritize", { paragraphs: ts.map((t) => t.text), mode });
-    showPreview(ts, results, mode === "light");
+    let results: string[] | null = null;
+    let engine = "Claude";
+    if (await invoke<boolean>("has_api_key")) {
+      try {
+        results = await invoke<string[]>("diacritize", { paragraphs, mode });
+      } catch (e) {
+        if (!(await invoke<boolean>("offline_model_installed"))) throw e;
+        engine = `offline (Claude failed: ${e})`;
+      }
+    }
+    if (!results) {
+      if (!(await invoke<boolean>("offline_model_installed")) && !(await installOfflineModel())) return;
+      results = await invoke<string[]>("diacritize_offline", { paragraphs, mode });
+      if (engine === "Claude") engine = "offline";
+    }
+    showPreview(ts, results, mode === "light", engine);
   } catch (e) {
     showNote(String(e));
   } finally {
@@ -186,14 +200,60 @@ async function runTashkeel() {
   }
 }
 
-function showPreview(ts: Target[], results: string[], keepExisting: boolean) {
+/** Downloads the offline model after asking; resolves to whether it's now installed. */
+async function installOfflineModel(): Promise<boolean> {
+  const ok = await confirmInPreview(
+    "تنزيل نموذج التشكيل · Download the offline تشكيل model?",
+    "One-time download, 72 MB (CATT by Abjad AI, Apache-2.0). After that تشكيل works without internet.",
+    "Download",
+  );
+  if (!ok) return false;
+  const unlisten = await listen<{ received: number; total: number | null }>("model-download", ({ payload }) => {
+    const mb = (n: number) => (n / 1e6).toFixed(0);
+    $("preview-title").textContent = payload.total
+      ? `Downloading… ${Math.round((100 * payload.received) / payload.total)}% (${mb(payload.received)} of ${mb(payload.total)} MB)`
+      : `Downloading… ${mb(payload.received)} MB`;
+  });
+  try {
+    showNote("Downloading…");
+    await invoke("install_offline_model");
+    return true;
+  } finally {
+    unlisten();
+  }
+}
+
+/** Shows a question in the preview card with one action button; resolves on the choice. */
+function confirmInPreview(title: string, note: string, action: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    showNote(title);
+    $("preview-note").textContent = note;
+    const accept = $<HTMLButtonElement>("preview-accept");
+    const cancel = $<HTMLButtonElement>("preview-cancel");
+    accept.textContent = action;
+    accept.hidden = false;
+    const done = (answer: boolean) => {
+      accept.removeEventListener("click", yes, true);
+      cancel.removeEventListener("click", no, true);
+      accept.textContent = "قبول · Accept";
+      resolve(answer);
+    };
+    const yes = (e: Event) => { e.stopImmediatePropagation(); done(true); };
+    const no = (e: Event) => { e.stopImmediatePropagation(); closePreview(); done(false); };
+    accept.addEventListener("click", yes, true);
+    cancel.addEventListener("click", no, true);
+  });
+}
+
+function showPreview(ts: Target[], results: string[], keepExisting: boolean, engine: string) {
   const { changed, skipped } = applyResults(view.state, ts, results, keepExisting);
   pending = { ts, results, keepExisting, doc: view.state.doc };
   $("preview-body").innerHTML = ts.map((t, i) => `<p>${previewHtml(t, results[i], keepExisting)}</p>`).join("");
   $("preview-title").textContent = changed ? "التشكيل المقترح" : "لا تغييرات مقترحة · Nothing to change";
-  $("preview-note").textContent = skipped
-    ? `${skipped} ${skipped === 1 ? "word was" : "words were"} left as typed (the AI tried to change letters)`
-    : "";
+  const source = engine === "Claude" ? "Claude" : engine === "offline" ? "Offline model" : `Offline model ${engine.slice("offline ".length)}`;
+  $("preview-note").textContent =
+    source +
+    (skipped ? ` · ${skipped} ${skipped === 1 ? "word" : "words"} left as typed (the AI tried to change letters)` : "");
   $<HTMLButtonElement>("preview-accept").hidden = !changed;
   preview.hidden = false;
 }
