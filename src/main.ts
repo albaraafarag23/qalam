@@ -1,11 +1,9 @@
-// Arabic subset only, so Latin text falls through to Noto Serif.
-import "@fontsource/noto-naskh-arabic/arabic-400.css";
-import "@fontsource/noto-naskh-arabic/arabic-700.css";
 import "@fontsource/noto-serif/400.css";
 import "@fontsource/noto-serif/700.css";
 import "@fontsource/noto-serif/400-italic.css";
 import "@fontsource/ibm-plex-sans-arabic/400.css";
 import "@fontsource/ibm-plex-sans-arabic/500.css";
+import "./fonts.css";
 import "prosemirror-view/style/prosemirror.css";
 import "./styles.css";
 
@@ -92,6 +90,23 @@ function updateStatus() {
   const first = block.match(strongChar)?.[0];
   document.getElementById("dir")!.textContent = !first ? "" : arabic.test(first) ? "العربية" : "English";
 }
+
+// Arabic document font: Naskh by default, Amiri as the classic alternative.
+const ARABIC_FONTS = ["naskh", "amiri"];
+const fontPicker = document.getElementById("arabic-font") as HTMLSelectElement;
+function setArabicFont(name: string) {
+  if (!ARABIC_FONTS.includes(name)) name = "naskh";
+  document.documentElement.dataset.arabicFont = name;
+  fontPicker.value = name;
+  try { localStorage.setItem("qalam.arabicFont", name); } catch {}
+}
+let savedFont = "naskh";
+try { savedFont = localStorage.getItem("qalam.arabicFont") ?? "naskh"; } catch {}
+setArabicFont(savedFont);
+fontPicker.addEventListener("change", () => {
+  setArabicFont(fontPicker.value);
+  view.focus();
+});
 
 updateStatus();
 view.focus();
