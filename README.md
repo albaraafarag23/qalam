@@ -37,4 +37,4 @@ The offline models (72 MB for تشكيل, 210 MB for punctuation) are downloaded
 
 ## Licence of bundled fonts
 
-Vazirmatn, Amiri, Noto Serif and IBM Plex Sans Arabic are released under the SIL Open Font License.
+Vazirmatn, Amiri, Noto Serif and IBM Plex Sans Arabic are released under the SIL Open Font License. "Qalam Amiri" (src/fonts/) is a modified Amiri with its climbing letter combinations switched off so every word sits on one line; it's built by `tools/build-arabic-font.py` and keeps Amiri's licence (src/fonts/OFL-Amiri.txt).
