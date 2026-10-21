@@ -16,6 +16,7 @@ import { inputRules, wrappingInputRule, textblockTypeInputRule } from "prosemirr
 import { splitListItem, liftListItem, sinkListItem, wrapInList } from "prosemirror-schema-list";
 import { schema } from "./editor/schema";
 import { blockDirection, directionAt, textDirection } from "./editor/direction";
+import { softCaret } from "./editor/caret";
 import { HARAKAT, activeHarakat, clearHarakat, setHaraka } from "./editor/harakat";
 import { applyResults, previewHtml, targets, type Target } from "./editor/tashkeel";
 import { applyMemory, emptyMemory, learn, recordApplied, type TashkeelMemory } from "./editor/memory";
@@ -83,6 +84,7 @@ const state = EditorState.create({
     keymap({ Enter: notePunctuationJob }), // first, so it sees every Enter exactly once
     rules,
     blockDirection,
+    softCaret,
     history(),
     keymap({
       "Mod-z": undo,
@@ -188,6 +190,7 @@ setArabicFont(savedFont);
 fontPicker.addEventListener("change", () => {
   setArabicFont(fontPicker.value);
   view.focus();
+  view.dispatch(view.state.tr); // re-measure the cursor for the new font
 });
 
 // ---- Automatic تشكيل ----

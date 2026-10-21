@@ -1,11 +1,15 @@
 :root {
-  --desk: #eceae6;
-  --paper: #ffffff;
-  --ink: #1d1d1f;
-  --ink-soft: #6b6b70;
-  --rule: #d9d6d0;
+  /* Warm, low-glare palette: off-white paper and dark grey ink are easier on the eyes
+     over long writing sessions than pure white and black. */
+  --desk: #efede8;
+  --paper: #fffdf9;
+  --ink: #2b2925;
+  --ink-soft: #77736b;
+  --rule: #e4e0d8;
   --accent: #1f6f5c;
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 8px 30px rgba(0, 0, 0, 0.06);
+  --hover: rgba(43, 41, 37, 0.06);
+  --shadow: 0 1px 2px rgba(60, 50, 30, 0.05), 0 10px 32px rgba(60, 50, 30, 0.07);
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
 
   /* Arabic glyphs come from the chosen Arabic face, Latin from Noto Serif: the Arabic
      faces are limited to Arabic code points (see fonts.css). */
@@ -19,13 +23,14 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --desk: #18181a;
-    --paper: #232326;
-    --ink: #ececee;
-    --ink-soft: #9a9aa0;
-    --rule: #34343a;
+    --desk: #1b1a18;
+    --paper: #262421;
+    --ink: #e9e5dd;
+    --ink-soft: #a29d93;
+    --rule: #3a3732;
     --accent: #5cc4a6;
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 30px rgba(0, 0, 0, 0.3);
+    --hover: rgba(233, 229, 221, 0.08);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 32px rgba(0, 0, 0, 0.3);
   }
 }
 
@@ -65,7 +70,7 @@ body { display: flex; flex-direction: column; }
   font-size: 14px;
   cursor: pointer;
 }
-.tools button:hover { background: var(--desk); }
+.tools button:hover { background: var(--hover); }
 .tools select {
   height: 30px;
   padding: 0 6px;
@@ -94,6 +99,7 @@ body { display: flex; flex-direction: column; }
 
 /* An A4-proportioned sheet; real pagination comes later. */
 .page {
+  position: relative; /* for the drawn cursor */
   max-width: 794px;
   min-height: 1123px;
   margin: 0 auto;
@@ -105,6 +111,7 @@ body { display: flex; flex-direction: column; }
 
 .ProseMirror {
   outline: none;
+  caret-color: transparent; /* Qalam draws its own cursor (editor/caret.ts) */
   font-family: var(--doc-font);
   font-size: 17px;
   line-height: 1.75;
@@ -239,3 +246,37 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .arabic-tools[hidden] { display: none; }
 @keyframes tools-in { from { opacity: 0; transform: translateX(-4px); } }
 @media (prefers-reduced-motion: reduce) { .arabic-tools { animation: none; } }
+
+/* ---- Cursor ---- */
+.soft-caret {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  pointer-events: none;
+  transition: transform 90ms var(--ease), height 90ms var(--ease);
+}
+.soft-caret.blink { animation: caret-blink 1.1s ease-in-out 0.5s infinite; }
+@keyframes caret-blink { 0%, 45% { opacity: 1; } 55%, 90% { opacity: 0; } }
+
+/* ---- Feel: instant press feedback, smooth hovers and entrances ---- */
+.tools button, .tools select, .icon-button, .preview-actions button, .settings-actions button {
+  transition: background-color 120ms ease, transform 100ms ease-out, color 120ms ease;
+}
+.tools button:active, .icon-button:active, .preview-actions button:active, .settings-actions button:active {
+  transform: scale(0.95);
+}
+.preview:not([hidden]) { animation: rise-in 220ms var(--ease); }
+@keyframes rise-in { from { opacity: 0; transform: translate(-50%, 10px); } }
+.settings[open] { animation: pop-in 200ms var(--ease); }
+@keyframes pop-in { from { opacity: 0; transform: scale(0.97); } }
+.settings[open]::backdrop { animation: fade-in 200ms ease; }
+@keyframes fade-in { from { opacity: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .soft-caret { transition: none; }
+  .preview:not([hidden]), .settings[open], .settings[open]::backdrop { animation: none; }
+  .tools button:active, .icon-button:active, .preview-actions button:active, .settings-actions button:active { transform: none; }
+}
