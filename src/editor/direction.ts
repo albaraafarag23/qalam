@@ -13,17 +13,22 @@ export function textDirection(text: string): "rtl" | "ltr" | null {
 
 const LIST_NODES = new Set(["bullet_list", "ordered_list", "list_item"]);
 
-// dir="auto" can't be used on lists: the browser skips descendants that carry their own
-// dir (every paragraph does), so a list would never see its Arabic text and stay
-// left-to-right. Instead each list and item gets an explicit dir from its own text,
-// recomputed on every change.
-export const listDirection = new Plugin({
+// Every list, list item and text block gets an explicit dir from its own text:
+// - dir="auto" can't be used on lists: the browser skips descendants that carry their
+//   own dir (every paragraph does), so a list would never see its Arabic text.
+// - An empty line or list takes the direction of the text before it, so pressing Enter
+//   after Arabic keeps the cursor on the right instead of jumping left until you type.
+// Recomputed on every change.
+export const blockDirection = new Plugin({
   props: {
     decorations(state) {
       const decorations: Decoration[] = [];
+      let previous: "rtl" | "ltr" | null = null;
       state.doc.descendants((node, pos) => {
-        if (!LIST_NODES.has(node.type.name)) return;
-        const dir = textDirection(node.textContent);
+        if (!node.isTextblock && !LIST_NODES.has(node.type.name)) return;
+        const own = textDirection(node.textContent);
+        const dir = own ?? previous;
+        if (node.isTextblock && own) previous = own;
         if (dir) decorations.push(Decoration.node(pos, pos + node.nodeSize, { dir }));
       });
       return DecorationSet.create(state.doc, decorations);

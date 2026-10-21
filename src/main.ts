@@ -15,7 +15,7 @@ import { keymap } from "prosemirror-keymap";
 import { inputRules, wrappingInputRule, textblockTypeInputRule } from "prosemirror-inputrules";
 import { splitListItem, liftListItem, sinkListItem, wrapInList } from "prosemirror-schema-list";
 import { schema } from "./editor/schema";
-import { listDirection, textDirection } from "./editor/direction";
+import { blockDirection, textDirection } from "./editor/direction";
 
 const { nodes, marks } = schema;
 
@@ -54,7 +54,7 @@ const state = EditorState.create({
   schema,
   plugins: [
     rules,
-    listDirection,
+    blockDirection,
     history(),
     keymap({
       "Mod-z": undo,
