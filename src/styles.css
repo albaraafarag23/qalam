@@ -122,16 +122,15 @@ body { display: flex; flex-direction: column; position: relative; }
 }
 .tools select:hover { background: var(--glass-hover); }
 .harakat { display: flex; gap: 2px; }
-/* Each mark is shown on ب; the tall line box keeps marks above and below the letter
-   (كسرة, تنوين كسر) inside the button. */
+/* Each mark is shown on ب. The buttons match the toolbar's height, and main.ts centres
+   each drawing on its ink (--dy), so marks above and below the letter both fit. */
 .tools button.haraka {
   min-width: 30px;
-  height: 34px;
   padding: 0 4px;
   font-family: var(--arabic-font), serif;
-  font-size: 17px;
-  line-height: 30px;
+  font-size: 15px;
 }
+.haraka .glyph { display: block; line-height: 30px; transform: translateY(var(--dy, 0)); }
 .tools button.active, .tools button.active:hover { background: var(--accent); color: var(--paper); }
 .sep { width: 1px; height: 18px; background: var(--rule); margin: 0 6px; }
 
@@ -285,10 +284,20 @@ button.primary, button.primary:hover { background: var(--accent); color: var(--p
 .status-toggle:hover { color: var(--ink); text-decoration: underline; }
 .settings-rule { border: 0; border-top: 1px solid var(--rule); margin: 16px 0 8px; }
 
-.arabic-tools { display: flex; align-items: center; gap: 4px; animation: tools-in 160ms ease-out; }
+/* The Arabic tools arrive one after another (--i is each button's place) with a soft
+   overshoot, and leave together with a quick fade. */
+.arabic-tools { display: flex; align-items: center; gap: 4px; --spring: cubic-bezier(0.34, 1.4, 0.64, 1); }
 .arabic-tools[hidden] { display: none; }
-@keyframes tools-in { from { opacity: 0; transform: translateX(-4px); } }
-@media (prefers-reduced-motion: reduce) { .arabic-tools { animation: none; } }
+.arabic-tools > .sep { animation: fade-in 300ms ease backwards; }
+.arabic-tools .haraka { animation: tool-in 420ms var(--spring) backwards; animation-delay: calc(var(--i) * 35ms); }
+.arabic-tools .tashkeel { animation: tool-in 420ms var(--spring) 300ms backwards; }
+.arabic-tools #tashkeel-mode { animation: tool-in 420ms var(--spring) 340ms backwards; }
+@keyframes tool-in { from { opacity: 0; transform: translateY(6px) scale(0.85); } }
+.arabic-tools.leaving { animation: tools-out 260ms ease-in both; pointer-events: none; }
+@keyframes tools-out { to { opacity: 0; transform: translateY(-3px); } }
+@media (prefers-reduced-motion: reduce) {
+  .arabic-tools > *, .arabic-tools .haraka, .arabic-tools .tashkeel, .arabic-tools #tashkeel-mode, .arabic-tools.leaving { animation: none; }
+}
 
 /* ---- Cursor ---- */
 .soft-caret {

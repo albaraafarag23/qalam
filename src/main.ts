@@ -129,11 +129,14 @@ const view = new EditorView(document.getElementById("page")!, {
 });
 
 const harakatBar = document.getElementById("harakat")!;
-for (const h of HARAKAT) {
+HARAKAT.forEach((h, i) => {
   const btn = document.createElement("button");
   btn.className = "haraka";
   btn.dataset.mark = h.mark;
-  btn.textContent = "\u0628" + h.mark; // shown on ب, as in Arabic teaching books: بَ
+  btn.style.setProperty("--i", String(i)); // entrance stagger
+  const glyph = btn.appendChild(document.createElement("span"));
+  glyph.className = "glyph";
+  glyph.textContent = "\u0628" + h.mark; // shown on ب, as in Arabic teaching books: بَ
   btn.title = `${h.name} (Alt+${h.key})`;
   btn.addEventListener("mousedown", (e) => e.preventDefault());
   btn.addEventListener("click", () => {
@@ -141,7 +144,7 @@ for (const h of HARAKAT) {
     view.focus();
   });
   harakatBar.appendChild(btn);
-}
+});
 
 // The editable area is only as tall as the text, so a click on the empty part of the
 // sheet (or the desk around it) would miss it. Put the cursor at the nearest text instead.
@@ -187,7 +190,58 @@ function updateStatus() {
   // text), or on an empty line that follows Arabic.
   const arabic =
     dir === "rtl" || lastTypedDirection === "rtl" || (!dir && !lastTypedDirection && directionAt(view.state) === "rtl");
-  document.getElementById("arabic-tools")!.hidden = !arabic;
+  showArabicTools(arabic);
+}
+
+// The Arabic tools ease in, button by button, and ease out instead of vanishing. Hiding
+// waits a moment so moving the cursor across a mixed document doesn't make them flicker.
+const arabicTools = document.getElementById("arabic-tools")!;
+let hideTimer: number | undefined;
+function showArabicTools(show: boolean) {
+  const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (show) {
+    clearTimeout(hideTimer);
+    hideTimer = undefined;
+    if (arabicTools.hidden || arabicTools.classList.contains("leaving")) {
+      arabicTools.classList.remove("leaving");
+      arabicTools.hidden = false;
+    }
+    return;
+  }
+  if (arabicTools.hidden || hideTimer !== undefined) return;
+  if (reduceMotion) {
+    arabicTools.hidden = true;
+    return;
+  }
+  hideTimer = window.setTimeout(() => {
+    arabicTools.classList.add("leaving");
+    hideTimer = window.setTimeout(() => {
+      arabicTools.hidden = true;
+      arabicTools.classList.remove("leaving");
+      hideTimer = undefined;
+    }, 260);
+  }, 350);
+}
+
+// The buttons are centred on their ink, not the font's line box, which would push marks
+// against the button's edges. Marks above the letter share one baseline and marks below
+// (ِ ٍ) another, so the ب stays level across each group.
+function centerHarakat() {
+  const ctx = document.createElement("canvas").getContext("2d")!;
+  const glyphs = [...harakatBar.querySelectorAll<HTMLElement>(".glyph")];
+  const style = getComputedStyle(glyphs[0]);
+  ctx.font = `${style.fontSize} ${style.fontFamily}`;
+  const letter = ctx.measureText("ب");
+  const measured = glyphs.map((glyph) => ({ glyph, m: ctx.measureText(glyph.textContent!) }));
+  for (const below of [false, true]) {
+    const group = measured.filter(({ m }) => (m.actualBoundingBoxDescent > letter.actualBoundingBoxDescent + 1) === below);
+    if (!group.length) continue;
+    const ascent = Math.max(...group.map(({ m }) => m.actualBoundingBoxAscent));
+    const descent = Math.max(...group.map(({ m }) => m.actualBoundingBoxDescent));
+    const { fontBoundingBoxAscent: a, fontBoundingBoxDescent: d } = group[0].m;
+    const dy = (ascent - descent) / 2 - (a - d) / 2;
+    for (const { glyph } of group) glyph.style.setProperty("--dy", `${dy.toFixed(1)}px`);
+  }
 }
 
 // Arabic document font: Amiri by default, Vazirmatn as the modern, flat alternative.
@@ -201,6 +255,8 @@ function setArabicFont(name: string) {
   document.documentElement.dataset.arabicFont = name;
   fontPicker.value = name;
   try { localStorage.setItem("qalam.arabicFont", name); } catch {}
+  const size = getComputedStyle(harakatBar.querySelector(".glyph")!).fontSize;
+  document.fonts.load(`${size} ${getComputedStyle(document.documentElement).getPropertyValue("--arabic-font")}`, "بَ").then(centerHarakat);
 }
 let savedFont = "amiri";
 try { savedFont = localStorage.getItem("qalam.arabicFont") ?? savedFont; } catch {}
