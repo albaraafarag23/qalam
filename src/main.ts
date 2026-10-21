@@ -474,5 +474,31 @@ $("key-remove").addEventListener("click", async () => {
 });
 settings.addEventListener("close", () => view.focus());
 
+// ---- Light / dark ----
+// Follows the system until the writer picks one with the ☾ / ☀ button; the choice is remembered.
+const themeButton = $<HTMLButtonElement>("theme-toggle");
+const systemDark = window.matchMedia("(prefers-color-scheme: dark)");
+function isDark() {
+  const chosen = document.documentElement.dataset.theme;
+  return chosen ? chosen === "dark" : systemDark.matches;
+}
+function showThemeButton() {
+  themeButton.textContent = isDark() ? "☀" : "☾";
+  themeButton.title = isDark() ? "Light mode" : "Dark mode";
+}
+try {
+  const saved = localStorage.getItem("qalam.theme");
+  if (saved === "light" || saved === "dark") document.documentElement.dataset.theme = saved;
+} catch {}
+showThemeButton();
+systemDark.addEventListener("change", showThemeButton);
+themeButton.addEventListener("click", () => {
+  const next = isDark() ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem("qalam.theme", next); } catch {}
+  showThemeButton();
+  view.focus();
+});
+
 updateStatus();
 view.focus();
