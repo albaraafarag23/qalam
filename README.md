@@ -10,12 +10,16 @@ A writing app for Arabic and English. It proofreads both languages as you type, 
 - Arabic fonts that sit evenly beside English text: Scheherazade New (default) and Amiri, built into the app.
 - حركات (Arabic diacritics): a toolbar and shortcuts (Alt+1 to Alt+8) that put a mark on the letter you just typed. A new vowel replaces the old one, and شدة combines with a vowel.
 - Headings, bold, italic, and bulleted and numbered lists. Arabic lists count ١ ٢ ٣.
+- Automatic تشكيل (button شكّل, Ctrl+Shift+T), light or full, shown as a preview first:
+  - offline by default, using [CATT](https://github.com/abjadai/catt) (Abjad AI, Apache-2.0). On the WikiNews benchmark it gets 5.5% of marks wrong with case endings, 3.2% without (our measurement);
+  - with a Claude API key, Claude is used instead, with the offline model as a fallback;
+  - it never changes your letters: any word whose letters differ is left as you typed it.
+- Automatic English punctuation, offline: press Enter at the end of an English paragraph and missing capitals and . , ? are added, using [punct_cap_seg_en](https://huggingface.co/1-800-BAD-CODE/punctuation_fullstop_truecase_english) (Apache-2.0). It only adds, never removes what you typed. One Ctrl+Z undoes it, and it can be switched off in the bottom bar.
 
 ## Planned
 
 - Spellcheck as you type, in Arabic and English, offline.
 - AI grammar and punctuation: Claude when online (bring your own API key), a local model offline.
-- Automatic تشكيل, full or light, that never changes your letters.
 - Real pages, printing and PDF export.
 - Open and save `.docx`.
 
@@ -25,8 +29,11 @@ You need Node.js 20+ and Rust. On Linux you also need Tauri's [system dependenci
 
 ```
 npm install
+./tools/fetch-onnxruntime.sh   # Microsoft's ONNX Runtime, for the offline models
 npm run tauri dev
 ```
+
+The offline models (72 MB for تشكيل, 210 MB for punctuation) are downloaded by the app the first time you use them, and checked against their SHA-256 fingerprints.
 
 ## Licence of bundled fonts
 

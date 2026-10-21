@@ -220,3 +220,14 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 }
 .settings-actions { margin-top: 8px; }
 .grow { flex: 1; }
+
+.status-left { display: flex; align-items: center; gap: 14px; }
+.status-toggle {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  cursor: pointer;
+}
+.status-toggle:hover { color: var(--ink); text-decoration: underline; }

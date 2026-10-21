@@ -10,7 +10,7 @@ import "./styles.css";
 import { EditorState, type Command } from "prosemirror-state";
 import { EditorView } from "prosemirror-view";
 import { baseKeymap, setBlockType, toggleMark } from "prosemirror-commands";
-import { history, undo, redo } from "prosemirror-history";
+import { history, undo, redo, closeHistory } from "prosemirror-history";
 import { keymap } from "prosemirror-keymap";
 import { inputRules, wrappingInputRule, textblockTypeInputRule } from "prosemirror-inputrules";
 import { splitListItem, liftListItem, sinkListItem, wrapInList } from "prosemirror-schema-list";
@@ -18,6 +18,7 @@ import { schema } from "./editor/schema";
 import { blockDirection, textDirection } from "./editor/direction";
 import { HARAKAT, activeHarakat, clearHarakat, setHaraka } from "./editor/harakat";
 import { applyResults, previewHtml, targets, type Target } from "./editor/tashkeel";
+import { edits as punctuationEdits, isEnglish, modelInput, words as splitWords } from "./editor/punctuation";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
@@ -31,6 +32,27 @@ const commands: Record<string, Command> = {
   italic: toggleMark(marks.em),
   ul: wrapInList(nodes.bullet_list),
   ol: wrapInList(nodes.ordered_list),
+};
+
+// ---- Automatic English punctuation ----
+// Pressing Enter at the end of an English paragraph queues it; once the model has
+// answered, missing capitals and punctuation are added (see editor/punctuation.ts).
+interface PunctuationJob {
+  pos: number; // position just before the paragraph, kept up to date as the text changes
+  text: string;
+}
+const punctuationJobs: PunctuationJob[] = [];
+let autoPunctuation = true;
+try { autoPunctuation = localStorage.getItem("qalam.autoPunctuation") !== "off"; } catch {}
+
+const notePunctuationJob: Command = (state) => {
+  const { $from, empty } = state.selection;
+  const text = $from.parent.textContent;
+  if (autoPunctuation && empty && $from.parent.isTextblock && $from.parentOffset === $from.parent.content.size && isEnglish(text)) {
+    punctuationJobs.push({ pos: $from.before(), text });
+    setTimeout(runPunctuationJobs, 0);
+  }
+  return false; // let Enter do its normal work
 };
 
 // Arabic-Indic (٠-٩) and Persian (۰-۹) digits count as numbers too, so "١. " starts a
@@ -57,6 +79,7 @@ const rules = inputRules({
 const state = EditorState.create({
   schema,
   plugins: [
+    keymap({ Enter: notePunctuationJob }), // first, so it sees every Enter exactly once
     rules,
     blockDirection,
     history(),
@@ -88,6 +111,7 @@ const view = new EditorView(document.getElementById("page")!, {
   state,
   attributes: { spellcheck: "false" }, // our own checker will draw the underlines
   dispatchTransaction(tr) {
+    for (const job of punctuationJobs) job.pos = tr.mapping.map(job.pos);
     view.updateState(view.state.apply(tr));
     updateStatus();
   },
@@ -287,6 +311,78 @@ function showNote(text: string) {
   pending = null;
   preview.hidden = false;
 }
+
+let punctuationBusy = false;
+async function runPunctuationJobs() {
+  if (punctuationBusy || !punctuationJobs.length) return;
+  punctuationBusy = true;
+  try {
+    if (!(await invoke<boolean>("punctuation_model_installed")) && !(await offerPunctuationModel())) {
+      punctuationJobs.length = 0;
+      return;
+    }
+    while (punctuationJobs.length) {
+      const job = punctuationJobs[0];
+      const suggestions = await invoke<string[][]>("punctuate_offline", {
+        paragraphs: [splitWords(job.text).map((w) => modelInput(w.text))],
+      });
+      punctuationJobs.shift();
+      // Apply only if the paragraph is still exactly as it was when Enter was pressed.
+      const node = view.state.doc.nodeAt(job.pos);
+      if (!node || !node.isTextblock || node.textContent !== job.text) continue;
+      const start = job.pos + 1;
+      let tr = view.state.tr;
+      for (const e of punctuationEdits(job.text, suggestions[0]).reverse()) {
+        tr = tr.insertText(e.text, start + e.offset, start + e.offset + e.length);
+      }
+      if (tr.docChanged) view.dispatch(closeHistory(tr));
+    }
+  } catch (e) {
+    punctuationJobs.length = 0;
+    showNote(`Auto-punctuation: ${e}`);
+  } finally {
+    punctuationBusy = false;
+  }
+}
+
+/** Asks once whether to download the English punctuation model; declining turns it off. */
+async function offerPunctuationModel(): Promise<boolean> {
+  const ok = await confirmInPreview(
+    "Download the English punctuation model?",
+    "One-time download, 210 MB (punct_cap_seg_en, Apache-2.0). It adds missing capitals and . , ? when you finish an English paragraph, without internet.",
+    "Download",
+  );
+  if (!ok) {
+    setAutoPunctuation(false);
+    return false;
+  }
+  const unlisten = await listen<{ received: number; total: number | null }>("model-download", ({ payload }) => {
+    const mb = (n: number) => (n / 1e6).toFixed(0);
+    $("preview-title").textContent = payload.total
+      ? `Downloading… ${Math.round((100 * payload.received) / payload.total)}% (${mb(payload.received)} of ${mb(payload.total)} MB)`
+      : `Downloading… ${mb(payload.received)} MB`;
+  });
+  try {
+    showNote("Downloading…");
+    await invoke("install_punctuation_model");
+    closePreview();
+    return true;
+  } finally {
+    unlisten();
+  }
+}
+
+const autoPunctButton = $<HTMLButtonElement>("auto-punct");
+function setAutoPunctuation(on: boolean) {
+  autoPunctuation = on;
+  autoPunctButton.textContent = `Auto-punctuation: ${on ? "on" : "off"}`;
+  try { localStorage.setItem("qalam.autoPunctuation", on ? "on" : "off"); } catch {}
+}
+setAutoPunctuation(autoPunctuation);
+autoPunctButton.addEventListener("click", () => {
+  setAutoPunctuation(!autoPunctuation);
+  view.focus();
+});
 
 // ---- Settings: the Claude API key ----
 async function refreshKeyStatus(message?: string) {

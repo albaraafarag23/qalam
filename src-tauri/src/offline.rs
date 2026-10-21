@@ -38,7 +38,7 @@ fn model_dir(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 /// Microsoft's ONNX Runtime library, shipped next to the app (see tools/fetch-onnxruntime.sh).
-fn onnx_runtime_path(app: &AppHandle) -> Result<PathBuf, String> {
+pub fn onnx_runtime_path(app: &AppHandle) -> Result<PathBuf, String> {
     let name = if cfg!(windows) { "onnxruntime.dll" } else { "libonnxruntime.so" };
     Ok(app.path().resource_dir().map_err(|e| e.to_string())?.join("onnxruntime").join(name))
 }
