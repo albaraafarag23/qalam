@@ -215,7 +215,6 @@ impl SentencePiece {
 struct Model {
     session: Session,
     tokenizer: SentencePiece,
-    _environment: ort::environment::Environment,
 }
 
 /// What the model suggests for one token: capitalise which characters, punctuation after it.
@@ -227,12 +226,8 @@ struct TokenPrediction {
 impl Model {
     fn load(dir: &PathBuf, runtime: &PathBuf) -> Result<Self, String> {
         let fail = |e: String| format!("Couldn't load the punctuation model: {e}");
-        let environment = ort::init_from(runtime)
-            .map_err(|e| fail(e.to_string()))?
-            .with_name("qalam-punctuation")
-            .build()
-            .map_err(|e| fail(e.to_string()))?;
-        let session = Session::builder(&environment)
+        let environment = crate::runtime::environment(runtime).map_err(fail)?;
+        let session = Session::builder(environment)
             .map_err(|e| fail(e.to_string()))?
             .with_intra_threads(4)
             .map_err(|e| fail(e.to_string()))?
@@ -240,7 +235,7 @@ impl Model {
             .map_err(|e| fail(e.to_string()))?;
         let bytes = std::fs::read(dir.join(FILES[0].0)).map_err(|e| fail(e.to_string()))?;
         let tokenizer = SentencePiece::load(&bytes).map_err(fail)?;
-        Ok(Model { session, tokenizer, _environment: environment })
+        Ok(Model { session, tokenizer })
     }
 
     fn predict_window(&mut self, ids: &[u32]) -> Result<Vec<TokenPrediction>, String> {
@@ -405,5 +400,18 @@ mod tests {
         assert_eq!(out, "Hello, my name is Albaraa, I study computer engineering in Jordan. What are you working on?");
         let out = model.suggest(&"i woke up at 6 am".split(' ').map(String::from).collect::<Vec<_>>()).unwrap();
         assert_eq!(out.join(" "), "I woke up at 6 a.m.");
+    }
+}
+
+#[cfg(test)]
+mod both_models {
+    // Loading the punctuation model and then the تشكيل model in one process, as the app does.
+    #[test]
+    fn punctuation_then_tashkeel() {
+        let (Ok(p), Ok(t)) = (std::env::var("QALAM_TEST_PUNCT_MODEL"), std::env::var("QALAM_TEST_MODEL")) else { return };
+        let runtime = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("onnxruntime/libonnxruntime.so");
+        let _p = super::Model::load(&p.into(), &runtime).unwrap();
+        let t = crate::offline::test_load(&t.into(), &runtime);
+        assert!(t.is_ok(), "{:?}", t.err());
     }
 }

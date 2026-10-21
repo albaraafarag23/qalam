@@ -273,7 +273,11 @@ function showPreview(ts: Target[], results: string[], keepExisting: boolean, eng
   const { changed, skipped } = applyResults(view.state, ts, results, keepExisting);
   pending = { ts, results, keepExisting, doc: view.state.doc };
   $("preview-body").innerHTML = ts.map((t, i) => `<p>${previewHtml(t, results[i], keepExisting)}</p>`).join("");
-  $("preview-title").textContent = changed ? "التشكيل المقترح" : "لا تغييرات مقترحة · Nothing to change";
+  $("preview-title").textContent = changed
+    ? "التشكيل المقترح"
+    : keepExisting
+      ? "لا تغييرات في الوضع الخفيف · Nothing to add in light mode. Try كامل."
+      : "لا تغييرات مقترحة · Nothing to change";
   const source = engine === "Claude" ? "Claude" : engine === "offline" ? "Offline model" : `Offline model ${engine.slice("offline ".length)}`;
   $("preview-note").textContent =
     source +

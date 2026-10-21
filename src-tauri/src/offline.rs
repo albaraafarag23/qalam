@@ -21,7 +21,7 @@ const MODEL_FILES: [&str; 2] = ["encoder.onnx", "decoder.onnx"];
 /// The model reads at most 1024 characters; longer text is split at spaces.
 const MAX_CHARS: usize = 900;
 /// Light mode only keeps marks the model is at least this sure of.
-const LIGHT_MIN_CONFIDENCE: f32 = 0.9;
+const LIGHT_MIN_CONFIDENCE: f32 = 0.8;
 
 /// Loaded on first use and kept for the rest of the session.
 #[derive(Default)]
@@ -30,7 +30,6 @@ pub struct OfflineModel(Mutex<Option<Model>>);
 struct Model {
     encoder: Session,
     decoder: Session,
-    _environment: ort::environment::Environment,
 }
 
 fn model_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -132,23 +131,38 @@ fn is_mark(c: char) -> bool {
     ('\u{064B}'..='\u{0652}').contains(&c)
 }
 
-/// Light تشكيل keeps only the marks that stop a word being misread (shadda and tanween),
-/// and only when the model is confident.
-fn keep_in_light_mode(marks: &str, confidence: f32) -> bool {
-    confidence >= LIGHT_MIN_CONFIDENCE
-        && marks.chars().any(|c| matches!(c, '\u{0651}' | '\u{064B}' | '\u{064C}' | '\u{064D}'))
+/// Light تشكيل (تشكيل جزئي) keeps the marks that change how a word reads and drops the
+/// predictable ones: سكون, a vowel already implied by the long letter after it (فتحة before ا
+/// or ى, كسرة before ي, ضمة before و), and case endings unless they're تنوين or شدة. Marks
+/// the model is less than 80% sure of are dropped too.
+fn light_marks(marks: &str, confidence: f32, next_letter: Option<char>, word_end: bool) -> &str {
+    const SHADDA: char = '\u{0651}';
+    const TANWEEN: [char; 3] = ['\u{064B}', '\u{064C}', '\u{064D}'];
+    if confidence < LIGHT_MIN_CONFIDENCE || marks.is_empty() {
+        return "";
+    }
+    let has = |c: char| marks.contains(c);
+    if has(SHADDA) || TANWEEN.iter().any(|&t| has(t)) {
+        return marks;
+    }
+    if word_end || has('\u{0652}') {
+        return ""; // case ending or سكون
+    }
+    let implied = match next_letter {
+        Some('ا' | 'ى') => has('\u{064E}'),
+        Some('ي') => has('\u{0650}'),
+        Some('و') => has('\u{064F}'),
+        _ => false,
+    };
+    if implied { "" } else { marks }
 }
 
 impl Model {
     fn load(dir: &PathBuf, runtime: &PathBuf) -> Result<Self, String> {
         let fail = |e: String| format!("Couldn't load the offline model: {e}");
-        let environment = ort::init_from(runtime)
-            .map_err(|e| fail(e.to_string()))?
-            .with_name("qalam")
-            .build()
-            .map_err(|e| fail(e.to_string()))?;
+        let environment = crate::runtime::environment(runtime).map_err(fail)?;
         let open = |name: &str| -> Result<Session, String> {
-            Session::builder(&environment)
+            Session::builder(environment)
                 .map_err(|e| e.to_string())?
                 .with_intra_threads(4)
                 .map_err(|e| e.to_string())?
@@ -157,7 +171,7 @@ impl Model {
         };
         let encoder = open("encoder.onnx").map_err(fail)?;
         let decoder = open("decoder.onnx").map_err(fail)?;
-        Ok(Model { encoder, decoder, _environment: environment })
+        Ok(Model { encoder, decoder })
     }
 
     /// For each input id, the best tag and its probability.
@@ -216,10 +230,12 @@ impl Model {
                 }
             }
             for (k, (tag, confidence)) in self.predict(&ids[start..end])?.into_iter().enumerate() {
-                if let Some(i) = owner[start + k] {
+                let p = start + k;
+                if let Some(i) = owner[p] {
                     let m = TAG_MARKS[tag];
-                    let keep = !light || keep_in_light_mode(m, confidence);
-                    marks[i] = Some(if keep { m.to_string() } else { String::new() });
+                    let next = owner.get(p + 1).copied().flatten().map(|j| chars[j]);
+                    let kept = if light { light_marks(m, confidence, next, next.is_none()) } else { m };
+                    marks[i] = Some(kept.to_string());
                 }
             }
             start = end;
@@ -280,9 +296,29 @@ mod tests {
         // Non-Arabic text and punctuation pass through untouched.
         let mixed = model.diacritize("كتب Qalam، ثم ذهب!", false).unwrap();
         assert!(mixed.contains(" Qalam، ") && mixed.ends_with('!'), "{mixed}");
-        // Light mode keeps only shadda/tanween.
+        // Light mode never adds sukun, and drops endings that aren't tanween or shadda.
         let light = model.diacritize("ذهب الطالب إلى المدرسة", true).unwrap();
-        assert!(light.chars().filter(|&c| is_mark(c)).all(|c| matches!(c, '\u{0651}' | '\u{064B}'..='\u{064E}' | '\u{064F}' | '\u{0650}')), "{light}");
+        assert!(!light.contains('\u{0652}'), "{light}");
+        assert!(light.contains("الطَّ"), "{light}");
         println!("light: {light}\nmixed: {mixed}");
+    }
+}
+
+#[cfg(test)]
+pub fn test_load(dir: &PathBuf, runtime: &PathBuf) -> Result<(), String> {
+    Model::load(dir, runtime).map(|_| ())
+}
+
+#[cfg(test)]
+mod light_samples {
+    use super::*;
+    #[test]
+    fn show_light_and_full() {
+        let Ok(dir) = std::env::var("QALAM_TEST_MODEL") else { return };
+        let runtime = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("onnxruntime/libonnxruntime.so");
+        let mut m = Model::load(&PathBuf::from(dir), &runtime).unwrap();
+        for s in ["انا اسمي البراء وحيد وأكتب في قلم كل يوم", "علم المعلم الطلاب درسا جديدا عن تاريخ العرب", "ذهب الطالب إلى المدرسة في الصباح الباكر"] {
+            println!("full : {}\nlight: {}\n", m.diacritize(s, false).unwrap(), m.diacritize(s, true).unwrap());
+        }
     }
 }
