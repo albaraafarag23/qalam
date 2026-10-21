@@ -1,4 +1,4 @@
-import { Plugin } from "prosemirror-state";
+import { Plugin, type EditorState } from "prosemirror-state";
 import { Decoration, DecorationSet } from "prosemirror-view";
 
 // Arabic letters (incl. presentation forms) vs Latin letters: the first strong one
@@ -9,6 +9,19 @@ const ARABIC = /[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]/;
 export function textDirection(text: string): "rtl" | "ltr" | null {
   const first = text.match(STRONG)?.[0];
   return !first ? null : ARABIC.test(first) ? "rtl" : "ltr";
+}
+
+/** The direction at the cursor: its paragraph's own, or for an empty one, the text before it. */
+export function directionAt(state: EditorState): "rtl" | "ltr" | null {
+  const { $from } = state.selection;
+  const own = textDirection($from.parent.textContent);
+  if (own) return own;
+  let previous: "rtl" | "ltr" | null = null;
+  state.doc.nodesBetween(0, $from.before(), (node) => {
+    if (node.isTextblock) previous = textDirection(node.textContent) ?? previous;
+    return !node.isTextblock;
+  });
+  return previous;
 }
 
 const LIST_NODES = new Set(["bullet_list", "ordered_list", "list_item"]);

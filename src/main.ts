@@ -15,7 +15,7 @@ import { keymap } from "prosemirror-keymap";
 import { inputRules, wrappingInputRule, textblockTypeInputRule } from "prosemirror-inputrules";
 import { splitListItem, liftListItem, sinkListItem, wrapInList } from "prosemirror-schema-list";
 import { schema } from "./editor/schema";
-import { blockDirection, textDirection } from "./editor/direction";
+import { blockDirection, directionAt, textDirection } from "./editor/direction";
 import { HARAKAT, activeHarakat, clearHarakat, setHaraka } from "./editor/harakat";
 import { applyResults, previewHtml, targets, type Target } from "./editor/tashkeel";
 import { applyMemory, emptyMemory, learn, recordApplied, type TashkeelMemory } from "./editor/memory";
@@ -108,10 +108,18 @@ const state = EditorState.create({
   ],
 });
 
+let lastTypedDirection: "rtl" | "ltr" | null = null;
+
 const view = new EditorView(document.getElementById("page")!, {
   state,
   attributes: { spellcheck: "false" }, // our own checker will draw the underlines
+  // Typing an Arabic letter (e.g. right after switching keyboards) shows the Arabic tools.
+  handleTextInput(_view, _from, _to, text) {
+    lastTypedDirection = textDirection(text) ?? lastTypedDirection;
+    return false;
+  },
   dispatchTransaction(tr) {
+    if (tr.selectionSet && !tr.docChanged) lastTypedDirection = null; // moved: go by the paragraph again
     for (const job of punctuationJobs) job.pos = tr.mapping.map(job.pos);
     view.updateState(view.state.apply(tr));
     updateStatus();
@@ -153,6 +161,13 @@ function updateStatus() {
 
   const dir = textDirection(view.state.selection.$from.parent.textContent);
   document.getElementById("dir")!.textContent = dir === "rtl" ? "العربية" : dir === "ltr" ? "English" : "";
+
+  // Arabic tools (حركات, شكّل) only while writing Arabic.
+  // Shown in an Arabic paragraph, right after typing an Arabic letter (even inside English
+  // text), or on an empty line that follows Arabic.
+  const arabic =
+    dir === "rtl" || lastTypedDirection === "rtl" || (!dir && !lastTypedDirection && directionAt(view.state) === "rtl");
+  document.getElementById("arabic-tools")!.hidden = !arabic;
 }
 
 // Arabic document font: Amiri by default, Vazirmatn as the modern, flat alternative.

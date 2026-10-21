@@ -234,3 +234,8 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 }
 .status-toggle:hover { color: var(--ink); text-decoration: underline; }
 .settings-rule { border: 0; border-top: 1px solid var(--rule); margin: 16px 0 8px; }
+
+.arabic-tools { display: flex; align-items: center; gap: 4px; animation: tools-in 160ms ease-out; }
+.arabic-tools[hidden] { display: none; }
+@keyframes tools-in { from { opacity: 0; transform: translateX(-4px); } }
+@media (prefers-reduced-motion: reduce) { .arabic-tools { animation: none; } }

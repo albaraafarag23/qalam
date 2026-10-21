@@ -20,18 +20,21 @@
         <button data-cmd="ul" title="Bulleted list">•</button>
         <button data-cmd="ol" title="Numbered list">1.</button>
         <span class="sep"></span>
-        <div class="harakat" id="harakat" dir="rtl" title="الحركات"></div>
-        <button id="tashkeel" class="tashkeel" title="تشكيل تلقائي للفقرة أو النص المحدد (Ctrl+Shift+T)">شكّل</button>
-        <select id="tashkeel-mode" title="مستوى التشكيل">
-          <option value="light">خفيف</option>
-          <option value="full">كامل</option>
-        </select>
-        <span class="sep"></span>
         <select id="arabic-font" title="Arabic font">
           <option value="amiri">أميري · Amiri</option>
           <option value="vazirmatn">وزیرمتن · Vazirmatn</option>
           <option value="scheherazade">شهرزاد · Scheherazade</option>
         </select>
+        <!-- Shown only while writing Arabic; last in the row so nothing shifts when it appears. -->
+        <div id="arabic-tools" class="arabic-tools" hidden>
+          <span class="sep"></span>
+          <div class="harakat" id="harakat" dir="rtl" title="الحركات"></div>
+          <button id="tashkeel" class="tashkeel" title="تشكيل تلقائي للفقرة أو النص المحدد (Ctrl+Shift+T)">شكّل</button>
+          <select id="tashkeel-mode" title="مستوى التشكيل">
+            <option value="light">خفيف</option>
+            <option value="full">كامل</option>
+          </select>
+        </div>
       </div>
       <button id="open-settings" class="icon-button" title="Settings">⚙</button>
     </header>
