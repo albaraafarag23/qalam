@@ -232,3 +232,4 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
   cursor: pointer;
 }
 .status-toggle:hover { color: var(--ink); text-decoration: underline; }
+.settings-rule { border: 0; border-top: 1px solid var(--rule); margin: 16px 0 8px; }

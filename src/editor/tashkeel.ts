@@ -43,15 +43,12 @@ export interface MarkEdit {
 }
 
 /**
- * Lines up Claude's result with the original text and returns, for each letter whose
- * marks differ, the marks to set. Words whose letters Claude changed are left alone and
- * counted in `skipped`, so a single altered word never costs the rest of the paragraph.
+ * Lines up the AI's result with the original text and returns the marks to add. Only bare
+ * letters get marks: a letter that already carries any (typed, corrected or accepted
+ * earlier) is never changed. Words whose letters the AI changed are left alone and counted
+ * in `skipped`, so a single altered word never costs the rest of the paragraph.
  */
-export function alignMarks(
-  original: string,
-  result: string,
-  keepExisting = false, // light mode: never strip marks the writer typed
-): { edits: MarkEdit[]; skipped: number } {
+export function alignMarks(original: string, result: string): { edits: MarkEdit[]; skipped: number } {
   const a = words(units(original));
   const b = words(units(result));
   if (a.length !== b.length) return { edits: [], skipped: a.length };
@@ -67,7 +64,7 @@ export function alignMarks(
     }
     wordA.forEach((u, j) => {
       const marks = wordB[j].marks;
-      if (marks !== u.marks && !(keepExisting && !marks)) {
+      if (!u.marks && marks) {
         const from = u.offset + 1;
         edits.push({ from, to: from + u.marks.length, marks });
       }
@@ -110,11 +107,11 @@ export function targets(state: EditorState): Target[] {
 }
 
 /** Applies the marks from Claude's results to the document, inside each target's range. */
-export function applyResults(state: EditorState, ts: Target[], results: string[], keepExisting: boolean) {
+export function applyResults(state: EditorState, ts: Target[], results: string[]) {
   const all: { pos: number; end: number; marks: string }[] = [];
   let skipped = 0;
   ts.forEach((t, i) => {
-    const { edits, skipped: s } = alignMarks(t.text, results[i], keepExisting);
+    const { edits, skipped: s } = alignMarks(t.text, results[i]);
     skipped += s;
     for (const e of edits) {
       // The letter itself sits at offset e.from - 1; it must be inside the selection.
@@ -135,9 +132,9 @@ const escape = (s: string) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "
  * Whole words, never single letters: wrapping a letter in its own element stops the
  * browser joining it to its neighbours, and the word falls apart (عَ ا يِ ش).
  */
-export function previewHtml(t: Target, result: string, keepExisting: boolean): string {
+export function previewHtml(t: Target, result: string): string {
   const byLetter = new Map<number, MarkEdit>();
-  for (const e of alignMarks(t.text, result, keepExisting).edits) {
+  for (const e of alignMarks(t.text, result).edits) {
     if (e.from - 1 >= t.from && e.from - 1 < t.to) byLetter.set(e.from - 1, e);
   }
   // The text after applying, plus for each output character whether it belongs to a

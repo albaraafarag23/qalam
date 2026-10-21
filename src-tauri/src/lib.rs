@@ -1,4 +1,5 @@
 mod claude;
+mod memory;
 mod offline;
 mod punctuate;
 mod runtime;
@@ -14,6 +15,8 @@ pub fn run() {
             claude::has_api_key,
             claude::clear_api_key,
             claude::diacritize,
+            memory::load_tashkeel_memory,
+            memory::save_tashkeel_memory,
             offline::offline_model_installed,
             offline::install_offline_model,
             offline::diacritize_offline,

@@ -18,6 +18,7 @@ import { schema } from "./editor/schema";
 import { blockDirection, textDirection } from "./editor/direction";
 import { HARAKAT, activeHarakat, clearHarakat, setHaraka } from "./editor/harakat";
 import { applyResults, previewHtml, targets, type Target } from "./editor/tashkeel";
+import { applyMemory, emptyMemory, learn, recordApplied, type TashkeelMemory } from "./editor/memory";
 import { edits as punctuationEdits, isEnglish, modelInput, words as splitWords } from "./editor/punctuation";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -184,7 +185,18 @@ modePicker.addEventListener("change", () => {
   view.focus();
 });
 
-let pending: { ts: Target[]; results: string[]; keepExisting: boolean; doc: typeof view.state.doc } | null = null;
+let pending: { ts: Target[]; results: string[]; doc: typeof view.state.doc } | null = null;
+
+// What Qalam has learned from the writer's corrections (editor/memory.ts).
+let memory: TashkeelMemory | null = null;
+async function loadMemory(): Promise<TashkeelMemory> {
+  if (!memory) {
+    const json = await invoke<string>("load_tashkeel_memory");
+    try { memory = json ? { ...emptyMemory(), ...JSON.parse(json) } : emptyMemory(); } catch { memory = emptyMemory(); }
+  }
+  return memory!;
+}
+const saveMemory = () => invoke("save_tashkeel_memory", { json: JSON.stringify(memory) });
 
 // Claude when there's an API key (best accuracy), otherwise the offline CATT model; if
 // Claude fails (no internet, rate limit), fall back to offline automatically.
@@ -197,6 +209,8 @@ async function runTashkeel() {
   }
   const mode = modePicker.value;
   const paragraphs = ts.map((t) => t.text);
+  const mem = await loadMemory();
+  if (learn(mem, paragraphs)) await saveMemory();
   tashkeelBtn.disabled = true;
   tashkeelBtn.textContent = "…";
   try {
@@ -215,6 +229,7 @@ async function runTashkeel() {
       results = await invoke<string[]>("diacritize_offline", { paragraphs, mode });
       if (engine === "Claude") engine = "offline";
     }
+    results = results.map((r, i) => applyMemory(paragraphs[i], r, mem));
     showPreview(ts, results, mode === "light", engine);
   } catch (e) {
     showNote(String(e));
@@ -269,13 +284,13 @@ function confirmInPreview(title: string, note: string, action: string): Promise<
   });
 }
 
-function showPreview(ts: Target[], results: string[], keepExisting: boolean, engine: string) {
-  const { changed, skipped } = applyResults(view.state, ts, results, keepExisting);
-  pending = { ts, results, keepExisting, doc: view.state.doc };
-  $("preview-body").innerHTML = ts.map((t, i) => `<p>${previewHtml(t, results[i], keepExisting)}</p>`).join("");
+function showPreview(ts: Target[], results: string[], light: boolean, engine: string) {
+  const { changed, skipped } = applyResults(view.state, ts, results);
+  pending = { ts, results, doc: view.state.doc };
+  $("preview-body").innerHTML = ts.map((t, i) => `<p>${previewHtml(t, results[i])}</p>`).join("");
   $("preview-title").textContent = changed
     ? "التشكيل المقترح"
-    : keepExisting
+    : light
       ? "لا تغييرات في الوضع الخفيف · Nothing to add in light mode. Try كامل."
       : "لا تغييرات مقترحة · Nothing to change";
   const source = engine === "Claude" ? "Claude" : engine === "offline" ? "Offline model" : `Offline model ${engine.slice("offline ".length)}`;
@@ -295,7 +310,14 @@ function closePreview() {
 $("preview-accept").addEventListener("click", () => {
   // If the text changed while the preview was open, the positions no longer line up.
   if (pending && pending.doc.eq(view.state.doc)) {
-    view.dispatch(applyResults(view.state, pending.ts, pending.results, pending.keepExisting).tr.scrollIntoView());
+    const { tr } = applyResults(view.state, pending.ts, pending.results);
+    view.dispatch(tr.scrollIntoView());
+    // Remember what Qalam put in, so a later change by the writer is recognised as a correction.
+    const texts = pending.ts.map((t) => view.state.doc.resolve(tr.mapping.map(t.start)).parent.textContent);
+    if (memory) {
+      recordApplied(memory, texts);
+      saveMemory();
+    }
   } else if (pending) showNote("The text changed meanwhile. Press شكّل again.");
   closePreview();
 });
@@ -389,6 +411,19 @@ autoPunctButton.addEventListener("click", () => {
 });
 
 // ---- Settings: the Claude API key ----
+async function refreshMemoryStatus() {
+  const n = Object.keys((await loadMemory()).corrections).length;
+  $("memory-status").textContent = n
+    ? `Qalam has learned ${n} ${n === 1 ? "correction" : "corrections"} from you.`
+    : "No corrections learned yet. Fix a word's حركات and Qalam will remember it.";
+  $<HTMLButtonElement>("memory-forget").disabled = !n;
+}
+$("memory-forget").addEventListener("click", async () => {
+  memory = emptyMemory();
+  await saveMemory();
+  refreshMemoryStatus();
+});
+
 async function refreshKeyStatus(message?: string) {
   const has = await invoke<boolean>("has_api_key");
   $("key-status").textContent = message ?? (has ? "✓ A key is saved." : "No key saved yet.");
@@ -397,6 +432,7 @@ async function refreshKeyStatus(message?: string) {
 function openSettings(message?: string) {
   $<HTMLInputElement>("api-key").value = "";
   refreshKeyStatus(message);
+  refreshMemoryStatus();
   settings.showModal();
 }
 $("open-settings").addEventListener("click", () => openSettings());

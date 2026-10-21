@@ -14,6 +14,8 @@ A writing app for Arabic and English. It proofreads both languages as you type, 
   - offline by default, using [CATT](https://github.com/abjadai/catt) (Abjad AI, Apache-2.0). On the WikiNews benchmark it gets 5.5% of marks wrong with case endings, 3.2% without (our measurement);
   - with a Claude API key, Claude is used instead, with the offline model as a fallback;
   - it never changes your letters: any word whose letters differ is left as you typed it.
+  - your own حركات always win: letters that already carry a mark are never changed;
+  - it learns from you: when you correct a word's حركات, Qalam remembers your version and uses it the next time that word appears (Settings shows what it has learned, and can forget it).
 - Automatic English punctuation, offline: press Enter at the end of an English paragraph and missing capitals and . , ? are added, using [punct_cap_seg_en](https://huggingface.co/1-800-BAD-CODE/punctuation_fullstop_truecase_english) (Apache-2.0). It only adds, never removes what you typed. One Ctrl+Z undoes it, and it can be switched off in the bottom bar.
 
 ## Planned
