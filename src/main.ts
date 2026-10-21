@@ -15,6 +15,7 @@ import { keymap } from "prosemirror-keymap";
 import { inputRules, wrappingInputRule, textblockTypeInputRule } from "prosemirror-inputrules";
 import { splitListItem, liftListItem, sinkListItem, wrapInList } from "prosemirror-schema-list";
 import { schema } from "./editor/schema";
+import { listDirection, textDirection } from "./editor/direction";
 
 const { nodes, marks } = schema;
 
@@ -28,12 +29,24 @@ const commands: Record<string, Command> = {
   ol: wrapInList(nodes.ordered_list),
 };
 
-// Markdown-style shortcuts while typing: "# " heading, "- " bullets, "1. " numbers.
+// Arabic-Indic (٠-٩) and Persian (۰-۹) digits count as numbers too, so "١. " starts a
+// numbered list when typing on an Arabic keyboard.
+const DIGITS = "0-9\u0660-\u0669\u06F0-\u06F9";
+function toNumber(digits: string): number {
+  return Number(digits.replace(/[\u0660-\u0669\u06F0-\u06F9]/g, (d) => String(d.charCodeAt(0) & 0xf)));
+}
+
+// Markdown-style shortcuts while typing: "# " heading, "- " bullets, "1. " / "١. " numbers.
 const rules = inputRules({
   rules: [
     textblockTypeInputRule(/^(#{1,2})\s$/, nodes.heading, (m) => ({ level: m[1].length })),
-    wrappingInputRule(/^\s*([-*])\s$/, nodes.bullet_list),
-    wrappingInputRule(/^\s*(\d+)[.)]\s$/, nodes.ordered_list),
+    wrappingInputRule(/^\s*([-*•])\s$/, nodes.bullet_list),
+    wrappingInputRule(
+      new RegExp(`^\\s*([${DIGITS}]+)[.)\u066B]\\s$`),
+      nodes.ordered_list,
+      (m) => ({ order: toNumber(m[1]) }),
+      (m, node) => node.childCount + node.attrs.order == toNumber(m[1]),
+    ),
   ],
 });
 
@@ -41,6 +54,7 @@ const state = EditorState.create({
   schema,
   plugins: [
     rules,
+    listDirection,
     history(),
     keymap({
       "Mod-z": undo,
@@ -76,19 +90,13 @@ document.querySelectorAll<HTMLButtonElement>("[data-cmd]").forEach((btn) => {
   });
 });
 
-// Arabic letters (incl. presentation forms) vs Latin letters: the first strong one wins,
-// matching how dir="auto" decides.
-const strongChar = /[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿A-Za-z]/;
-const arabic = /[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]/;
-
 function updateStatus() {
   const text = view.state.doc.textContent.trim();
   const words = text ? text.split(/\s+/).length : 0;
   document.getElementById("words")!.textContent = `${words} ${words === 1 ? "word" : "words"}`;
 
-  const block = view.state.selection.$from.parent.textContent;
-  const first = block.match(strongChar)?.[0];
-  document.getElementById("dir")!.textContent = !first ? "" : arabic.test(first) ? "العربية" : "English";
+  const dir = textDirection(view.state.selection.$from.parent.textContent);
+  document.getElementById("dir")!.textContent = dir === "rtl" ? "العربية" : dir === "ltr" ? "English" : "";
 }
 
 // Arabic document font: Scheherazade New by default, Amiri as the classic alternative.

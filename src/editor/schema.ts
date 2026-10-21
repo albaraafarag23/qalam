@@ -17,6 +17,7 @@ const nodes = basic.spec.nodes
     toDOM: (node) => ["h" + node.attrs.level, { dir: "auto" }, 0],
   });
 
+// Lists take their direction from the listDirection plugin (see direction.ts), not dir="auto".
 export const schema = new Schema({
   nodes: addListNodes(nodes, "paragraph block*", "block"),
   marks: basic.spec.marks,

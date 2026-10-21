@@ -102,6 +102,8 @@ body { display: flex; flex-direction: column; }
 .ProseMirror h1 { font-size: 2em; line-height: 1.3; margin: 0.4em 0 0.5em; }
 .ProseMirror h2 { font-size: 1.4em; line-height: 1.4; margin: 1em 0 0.4em; }
 .ProseMirror ul, .ProseMirror ol { padding-inline-start: 1.6em; margin: 0 0 0.6em; }
+/* Arabic numbered lists count ١ ٢ ٣. */
+.ProseMirror ol:dir(rtl) { list-style-type: arabic-indic; }
 .ProseMirror li > p { margin-bottom: 0.2em; }
 
 .status {
