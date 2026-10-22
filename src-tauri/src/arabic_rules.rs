@@ -262,6 +262,83 @@ fn hadha_feminine(chars: &[char], ws: &[Word], out: &mut Vec<Problem>) {
     }
 }
 
+/// كان and its sisters, a definite subject, then a one-word indefinite predicate that ends the
+/// clause without the accusative alif: كان الجو جميل. → جميلًا.
+///
+/// Without حركات the accusative usually shows only as that alif, so this is the one place it can
+/// be checked. Kept narrow on purpose: the predicate must end the clause or be followed by an
+/// adverb or a separate preposition (any other word after it may be a possessive, «كان القرار
+/// قرار الحكومة», where no alif is right), it must not look like a verb,
+/// a dual or plural, a word that never takes the alif (أكبر، عطشان، words ending in ة ء ى),
+/// a preposition with a pronoun (لهم → «لهما» is a word, but not this one) or an adverb, and
+/// the fix must be a dictionary word. ظل is left out: it's also a noun («في ظل الخلافة»).
+fn kana_predicate(chars: &[char], ws: &[Word], dict: &Dictionary, out: &mut Vec<Problem>) {
+    const KANA: [&str; 13] = ["كان", "كانت", "أصبح", "أصبحت", "ليس", "ليست", "صار", "صارت", "بات", "باتت", "أمسى", "أضحى", "ظلت"];
+    // Words after the predicate that show it's complete: adverbs, and separate prepositions (a
+    // possessive can't start with one, so «مجتهد في دروسه» is a whole predicate).
+    const STILL_ENDS_CLAUSE: [&str; 16] = [
+        "جدا", "للغاية", "أيضا", "تماما", "دائما", "حقا", "فعلا", "كثيرا", "في", "على", "من", "إلى", "عن", "مع", "منذ", "حتى",
+    ];
+    const NOT_PREDICATES: [&str; 22] = [
+        "بعد", "قبل", "فوق", "تحت", "عند", "هناك", "هنا", "حيث", "أين", "كيف", "متى", "منذ", "حول", "خلال", "دون", "ضد", "مع",
+        "لدى", "نحو", "بين", "كذلك", "ذلك",
+    ];
+    const PRONOUNS: [&str; 11] = ["ه", "ها", "هم", "هما", "هن", "ك", "كم", "كما", "كن", "نا", "ي"];
+    const PREPOSITIONS: [&str; 10] = ["ل", "ب", "ك", "عن", "من", "في", "على", "إلي", "مع", "عند"];
+    for (i, triple) in ws.windows(3).enumerate() {
+        let (kana, subject, predicate) = (&triple[0], &triple[1], &triple[2]);
+        let k = kana.bare.strip_prefix('و').or_else(|| kana.bare.strip_prefix('ف')).unwrap_or(&kana.bare);
+        if !KANA.contains(&k) && !KANA.contains(&kana.bare.as_str()) {
+            continue;
+        }
+        if !subject.bare.starts_with("ال") || !adjacent(chars, kana, subject) || !adjacent(chars, subject, predicate) {
+            continue;
+        }
+        let x = predicate.bare.as_str();
+        let n = x.chars().count();
+        let looks_wrong_kind = n < 3
+            || ["ال", "وال", "فال", "بال", "كال", "لل"].iter().any(|p| x.starts_with(p))
+            || x.starts_with(['ي', 'ت', 'ن', 'أ', 'إ', 'آ'])
+            || ["سي", "ست", "سن", "سأ"].iter().any(|p| x.starts_with(p))
+            || x.ends_with(['ة', 'ء', 'ى', 'ا', 'ي', 'ئ'])
+            || ["ان", "ون", "ين", "ات"].iter().any(|e| x.ends_with(e))
+            || NOT_PREDICATES.contains(&x)
+            || PREPOSITIONS.iter().any(|p| x.strip_prefix(p).is_some_and(|rest| PRONOUNS.contains(&rest)));
+        if looks_wrong_kind {
+            continue;
+        }
+        // The clause must end here: punctuation, the end, or an adverb like «جدا».
+        let after = chars[predicate.to..].iter().find(|c| **c != ' ');
+        let ends = match after {
+            None => true,
+            Some(c) if matches!(c, '.' | '،' | '؛' | '؟' | '!' | ':' | '\n') => true,
+            _ => ws.get(i + 3).is_some_and(|w| adjacent(chars, predicate, w) && STILL_ENDS_CLAUSE.contains(&w.bare.as_str())),
+        };
+        let with_alif = x.to_string() + "ا";
+        if ends && dict.check(x) && dict.check(&with_alif) {
+            out.push(problem(
+                predicate.from,
+                predicate.to,
+                x.to_string() + "\u{064B}ا",
+                "خبر «كان» وأخواتها منصوب، فيُكتب بتنوين الفتح وألف: «كان الجو جميلًا».",
+            ));
+        }
+    }
+}
+
+/// و written on its own: «و الكتاب» → «والكتاب». The conjunction is always joined to the next
+/// word. Left alone before single letters, digits and brackets («و ز», «و (2)»), as in maths
+/// and lists.
+fn detached_waw(chars: &[char], ws: &[Word], out: &mut Vec<Problem>) {
+    for pair in ws.windows(2) {
+        let (waw, next) = (&pair[0], &pair[1]);
+        if waw.bare == "و" && next.bare.chars().count() >= 2 && adjacent(chars, waw, next) {
+            let joined: String = std::iter::once('و').chain(chars[next.from..next.to].iter().copied()).collect();
+            out.push(problem(waw.from, next.to, joined, "واو العطف تُكتب متصلة بالكلمة التي بعدها: «والكتاب»."));
+        }
+    }
+}
+
 /// All rule findings in a paragraph, as character offsets.
 pub fn check(text: &str, dict: &Dictionary, listed: &HashSet<String>) -> Vec<Problem> {
     let chars: Vec<char> = text.chars().collect();
@@ -278,6 +355,8 @@ pub fn check(text: &str, dict: &Dictionary, listed: &HashSet<String>) -> Vec<Pro
     qala_inna(&chars, &ws, &mut out);
     plural_after_particle(&chars, &ws, dict, listed, &mut out);
     hadha_feminine(&chars, &ws, &mut out);
+    kana_predicate(&chars, &ws, dict, &mut out);
+    detached_waw(&chars, &ws, &mut out);
     out
 }
 
@@ -328,6 +407,12 @@ mod tests {
         one(&d, "تحدثت مع المهندسون عن المشروع.", "المهندسون", "المهندسين");
         one(&d, "هذا المدرسة كبيرة جدا.", "هذا", "هذه");
         one(&d, "ذهبت إلى هذا الجامعة.", "هذا", "هذه");
+        one(&d, "كان الطعام لذيذ جدا.", "لذيذ", "لذيذًا");
+        one(&d, "أصبح الطالب مجتهد في دروسه.", "مجتهد", "مجتهدًا");
+        one(&d, "كان الجو جميل.", "جميل", "جميلًا");
+        one(&d, "أصبح الوضع خطير جدا.", "خطير", "خطيرًا");
+        one(&d, "ليس الأمر سهل، لكنه ممكن.", "سهل", "سهلًا");
+        one(&d, "اشتريت الخبز و الحليب.", "و الحليب", "والحليب");
     }
 
     #[test]
@@ -341,6 +426,11 @@ mod tests {
             "بدأ بطرس بطرس غالي عمله، ومبلغها مئة ألف ألف فلس.",
             "مثل الرياح والأعاصير والأعاصير المضادة.",
             "وفي هذا إشارة إلى مكانته، وهذا الخليفة عادل، وهذه المدرسة كبيرة.",
+            "كان الجو جميلا، وكان القرار قرار الحكومة، وكان الأمر كذلك.",
+            "كان الفضل لهم. كان الحكم لله. كان الاجتماع بعد.",
+            "كان الطالب يدرس. أصبح الولد أكبر. كانت الطالبات مجتهدات. كان الفائزون.",
+            "في ظل الخلافة العباسية، وكان التحليل النصي.",
+            "إذا كانت س و ص عددين، فإن و (2) صحيحة.",
             "لا لا، لم أقصد ذلك.",
             "قال إن الامتحان صعب.",
             "يجب أن يذهب الطلاب إلى المدرسة.",
@@ -389,6 +479,10 @@ mod tests {
         (" .", "من النهر ."),
         ("العراقيون", "لدى العراقيون"),
         (" .", "ونادي المنصور ."),
+        ("و المفضليات", "اختيارها.و المفضليات"),
+        ("و في", "و في العصر الفاطمي"),
+        ("و مدينة", "الشام و مدينة الياسمين"),
+        ("و دير", "دجلة، و دير للنصارى"),
     ];
 
     #[test]

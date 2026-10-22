@@ -29,6 +29,9 @@ Run it: `QALAM_TEST_ARABIC_CORPUS=<text file> cargo test --release clean_corpus 
 | Latin ? , ; between Arabic words | كيف حالك? | كيف حالك؟ | n/a |
 | إنشاء الله | إنشاء الله | إن شاء الله | n/a |
 | هذا before a feminine noun | هذا المدرسة | هذه المدرسة | ⚠ **0**: correct text never has it, so the gate can't test this rule; its safety rests on hand-written exceptions |
+| كان and its sisters + a predicate without its alif *(round 2)* | كان الجو جميل. · أصبح الطالب مجتهد في دروسه | جميلًا · مجتهدًا | 37 positions judged (29 without alif, all rightly left alone; 8 correct with alif) |
+| A detached و *(round 2)* | الخبز و الحليب | والحليب | n/a (found 5 real ones in Wikipedia) |
+| Run-together phrases *(round 2, in the mistakes list)* | الحمدلله · انشالله · ماشاءالله · بإذنالله | الحمد لله · إن شاء الله · ما شاء الله · بإذن الله | n/a |
 
 Each fix comes with a short explanation in Arabic, written for Qalam.
 
@@ -43,6 +46,13 @@ Each fix comes with a short explanation in Arabic, written for Qalam.
   words start with و (الأعاصير والأعاصير المضادة). This costs one real catch in the test text (an indefinite «طائرة طائرة»).
 - **هذا:** only before a definite noun ending in ة, right after هذا (so «وفي هذا إشارة» is left alone). Men's titles ending in ة
   (الخليفة، العلامة، الداعية…) are excepted.
+- **كان:** the accusative usually shows only as an alif when there are no حركات, so this is the one place it can be checked.
+  The predicate must end the clause, or be followed by an adverb (جدا) or a separate preposition (في، على…). Any other word after
+  it might start a possessive («كان القرار قرارَ الحكومة», correctly without alif). It must not look like a verb (ي ت ن أ, سي…),
+  a dual or plural (ان ون ين ات), a word that never takes the alif (أكبر، عطشان، words ending in ة ء ى), an adverb (هنا، بعد،
+  كذلك) or a preposition with a pronoun (لهم: «لهما» is a word, but the wrong one). The fix must be a dictionary word. ظل is
+  left out because it's also a noun («في ظل الخلافة»). It misses «كان الجو جميل اليوم» on purpose, because «اليوم» can start a possessive.
+- **Detached و:** only before a word of 2+ letters (not «و ز» or «و (2)» in maths and lists).
 
 ## Results vs LanguageTool
 
@@ -57,9 +67,13 @@ LanguageTool still finds a few things Qalam doesn't (the هذا rule was its ide
 real grammatical analysis: agreement (الطلاب ذهب، البنت الجميل), كان and its sisters (كان الجو جميل), numbers (ثلاث طلاب),
 objects (رأيت المهندسون), الذي/التي. They're the job for the opt-in Claude check.
 
+## Tried and dropped
+- **الذي after a feminine noun** (المرأة الذي → التي). In the clean text, all 19 cases of «ال…ة الذي» were correct, because
+  الذي referred to an earlier word: «مؤتمر القاهرة الذي», «للأمم المتحدة الذي», even «من المهادنة الذي» right after a
+  preposition. No guard tells these apart without real grammatical analysis, so this is left to the Claude check.
+
 ## Next rules worth trying (each through the same gate)
-- **كان / أصبح / ليس + an indefinite predicate without tanween** (كان الجو جميل → جميلًا). Needs care: the predicate is
-  often a phrase, not one word.
-- **Numbers 3–10 with a plural noun** (ثلاث طلاب → ثلاثة). Needs each noun's singular and its gender.
-- **الذي / التي after a person noun** (المرأة الذي → التي). LanguageTool's version had 34 false alarms. It must skip
-  possessive constructions (كتاب المدرسة الذي…).
+- **Numbers 3–10 with a plural noun** (ثلاث طلاب → ثلاثة). Needs each noun's singular and its grammatical gender, which the
+  dictionary doesn't record. That means a small gender list first.
+- **A more formal test text.** Wikipedia rarely contains the informal mistakes these rules target. A clean corpus of
+  newspaper or blog Arabic would test the كان and و rules harder.

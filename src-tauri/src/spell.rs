@@ -486,6 +486,8 @@ mod tests {
         assert!(s.note.is_some());
         // Same word with حركات.
         assert_eq!(flagged(&mut c, "ذَالِكَ"), ["ذَالِكَ"]);
+        assert_eq!(c.suggest("الحمدلله", English::Us).words, ["الحمد لله"]);
+        assert_eq!(c.suggest("انشالله", English::Us).words, ["إن شاء الله"]);
     }
 
     #[test]
