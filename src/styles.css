@@ -94,8 +94,8 @@ body { -webkit-user-select: none; user-select: none; }
   z-index: 5;
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 10px 20px;
+  gap: 12px;
+  padding: 10px 14px;
   background: var(--bar);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   backdrop-filter: blur(20px) saturate(180%);
@@ -103,7 +103,9 @@ body { -webkit-user-select: none; user-select: none; }
 }
 .brand { font-weight: 500; letter-spacing: 0.02em; white-space: nowrap; flex-shrink: 0; }
 .brand-ar { color: var(--accent); margin-inline-start: 4px; }
-.tools { display: flex; align-items: center; gap: 4px; }
+/* In a narrow window the toolbar needs the room (the Arabic tools are wide): just «قلم». */
+@media (max-width: 1180px) { .brand-en { display: none; } .brand-ar { margin-inline-start: 0; } }
+.tools { display: flex; align-items: center; gap: 3px; }
 .tools button {
   min-width: 34px;
   height: 30px;
@@ -195,7 +197,7 @@ body { -webkit-user-select: none; user-select: none; }
 }
 .tools button.tashkeel:disabled { opacity: 0.6; cursor: progress; }
 .icon-button {
-  width: 34px;
+  width: 30px;
   height: 30px;
   border: 0;
   border-radius: 9px;
@@ -379,6 +381,16 @@ button.primary, button.primary:hover { background: var(--accent); color: var(--p
   text-underline-offset: 0.3em;
   cursor: pointer;
 }
+/* Claude's suggestions: a dotted line in the accent colour, so all three kinds differ in shape. */
+.ProseMirror .claude-issue {
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: var(--accent);
+  text-decoration-thickness: 2px;
+  text-decoration-skip-ink: none;
+  text-underline-offset: 0.32em;
+  cursor: pointer;
+}
 .spell-card {
   position: fixed;
   z-index: 20;
@@ -409,6 +421,8 @@ button.primary, button.primary:hover { background: var(--accent); color: var(--p
   cursor: pointer;
 }
 .spell-card button[hidden] { display: none; }
+.spell-card.is-claude .spell-note::before { content: "✦ Claude · "; color: var(--accent); }
+.icon-button:disabled, .status-toggle:disabled { opacity: 0.5; cursor: progress; }
 .spell-suggestions button { font-family: var(--doc-font); font-size: 17px; font-weight: 500; }
 .spell-card button:hover:not(:disabled) { background: var(--hover); }
 .spell-card button:disabled { color: var(--ink-soft); cursor: default; }

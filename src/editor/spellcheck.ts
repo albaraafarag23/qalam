@@ -1,5 +1,6 @@
 // Live spelling and grammar check. The checking itself happens in Rust (src-tauri/src/spell.rs
-// and grammar.rs); this plugin decides what to send and draws the result as underlines.
+// and grammar.rs); this plugin decides what to send and draws the result as underlines. It also
+// shows the suggestions of the opt-in Claude check, which stay until their text is edited.
 //
 // - Underlines are inline decorations on whole words, mapped through every edit, so they
 //   stay on the right word while a re-check is pending (research/grammarly.md).
@@ -15,7 +16,7 @@ import type { Node as PMNode } from "prosemirror-model";
 export interface Issue {
   from: number;
   to: number;
-  kind: "spelling" | "grammar";
+  kind: "spelling" | "grammar" | "claude";
   /** Grammar: what's wrong, and fixes for from..to ("" removes it). */
   message?: string;
   replacements?: string[];
@@ -66,10 +67,13 @@ type Meta =
   | { type: "failed" }
   | { type: "release" }
   | { type: "enable"; on: boolean }
-  | { type: "ignore"; key: string };
+  | { type: "ignore"; key: string }
+  | { type: "claude"; blocks: { pos: number; text: string; issues: Issue[] }[] };
 
-/** Ignoring a misspelt word ignores it everywhere; a grammar problem, wherever that text recurs. */
-const ignoreKey = (kind: Issue["kind"], text: string) => (kind === "spelling" ? text : `grammar:${text}`);
+/** Ignoring a misspelt word ignores it everywhere; other problems, wherever that text recurs. */
+const ignoreKey = (kind: Issue["kind"], text: string) => (kind === "spelling" ? text : `${kind}:${text}`);
+const CLASSES = { spelling: "misspelt", grammar: "grammar-issue", claude: "claude-issue" };
+const isClaude = (spec: { kind?: string }) => spec.kind === "claude";
 
 export const spellcheckKey = new PluginKey<SpellState>("spellcheck");
 
@@ -134,7 +138,8 @@ function applyResults(prev: SpellState, doc: PMNode, results: Issue[][], cursorW
     // Edited again while being checked: it's already queued for another check.
     if (!node?.isTextblock || blockText(node) !== text) return;
     const start = pos + 1;
-    decorations = decorations.remove(decorations.find(start, pos + node.nodeSize - 1));
+    // Claude's suggestions belong to the opt-in check, not to this one: they stay.
+    decorations = decorations.remove(decorations.find(start, pos + node.nodeSize - 1, (spec) => !isClaude(spec)));
     const underlines: Underline[] = (results[i] ?? [])
       .map((m) => ({ ...m, from: start + m.from, to: start + m.to, text: text.slice(m.from, m.to) }))
       .filter((u) => !prev.ignored.has(ignoreKey(u.kind, u.text)));
@@ -143,8 +148,7 @@ function applyResults(prev: SpellState, doc: PMNode, results: Issue[][], cursorW
       held = { from: Math.min(u.from, typing.from), to: Math.max(u.to, typing.to) };
       return false;
     });
-    const cls = { spelling: "misspelt", grammar: "grammar-issue" };
-    decorations = decorations.add(doc, shown.map((u) => Decoration.inline(u.from, u.to, { class: cls[u.kind] }, u)));
+    decorations = decorations.add(doc, shown.map((u) => Decoration.inline(u.from, u.to, { class: CLASSES[u.kind] }, u)));
   });
   return { ...prev, decorations, inflight: [], held };
 }
@@ -177,7 +181,19 @@ export function spellcheck(options: SpellcheckOptions): Plugin<SpellState> {
           lastEdit: tr.docChanged ? newState.selection.head : prev.lastEdit === null ? null : map(prev.lastEdit),
           held: prev.held && { from: map(prev.held.from), to: map(prev.held.to) },
         };
-        if (tr.docChanged && next.enabled) next.pending = unique([...next.pending, ...changedBlocks(tr)]);
+        if (tr.docChanged) {
+          const changed = changedBlocks(tr);
+          if (next.enabled) next.pending = unique([...next.pending, ...changed]);
+          // A Claude suggestion whose text was edited no longer applies.
+          const stale = changed.flatMap((pos) => {
+            const node = tr.doc.nodeAt(pos);
+            if (!node) return [];
+            return next.decorations
+              .find(pos + 1, pos + node.nodeSize - 1, isClaude)
+              .filter((d) => tr.doc.textBetween(d.from, d.to, undefined, LEAF) !== d.spec.text);
+          });
+          if (stale.length) next.decorations = next.decorations.remove(stale);
+        }
 
         const meta = tr.getMeta(spellcheckKey) as Meta | undefined;
         switch (meta?.type) {
@@ -194,7 +210,21 @@ export function spellcheck(options: SpellcheckOptions): Plugin<SpellState> {
             return { ...next, held: null, lastEdit: null, pending: pos === null ? next.pending : unique([...next.pending, pos]) };
           }
           case "enable":
-            return { ...next, enabled: meta.on, decorations: DecorationSet.empty, inflight: [], held: null, lastEdit: null, pending: meta.on ? allBlocks(tr.doc) : [] };
+            return { ...next, enabled: meta.on, decorations: next.decorations.remove(next.decorations.find(undefined, undefined, (spec) => !isClaude(spec))), inflight: [], held: null, lastEdit: null, pending: meta.on ? allBlocks(tr.doc) : [] };
+          case "claude": {
+            let decorations = next.decorations;
+            for (const { pos, text, issues } of meta.blocks) {
+              const node = tr.doc.nodeAt(pos);
+              if (!node?.isTextblock || blockText(node) !== text) continue;
+              const start = pos + 1;
+              decorations = decorations.remove(decorations.find(start, pos + node.nodeSize - 1, isClaude));
+              const underlines = issues
+                .map((m) => ({ ...m, from: start + m.from, to: start + m.to, text: text.slice(m.from, m.to) }))
+                .filter((u) => !next.ignored.has(ignoreKey(u.kind, u.text)));
+              decorations = decorations.add(tr.doc, underlines.map((u) => Decoration.inline(u.from, u.to, { class: CLASSES.claude }, u)));
+            }
+            return { ...next, decorations };
+          }
           case "ignore": {
             const gone = next.decorations.find(undefined, undefined, (spec) => ignoreKey(spec.kind, spec.text) === meta.key);
             return { ...next, ignored: new Set(next.ignored).add(meta.key), decorations: next.decorations.remove(gone) };
@@ -267,4 +297,18 @@ export function underlineAt(state: EditorState, pos: number): Underline | null {
 
 export const spellcheckEnabled = (state: EditorState) => spellcheckKey.getState(state)?.enabled ?? false;
 export const setSpellcheck = (tr: Transaction, on: boolean) => tr.setMeta(spellcheckKey, { type: "enable", on } satisfies Meta);
+/** Positions and texts of the textblocks a range covers, for sending to a checker. */
+export function blocksIn(doc: PMNode, from: number, to: number): { pos: number; text: string }[] {
+  const out: { pos: number; text: string }[] = [];
+  doc.nodesBetween(from, to, (node, pos) => {
+    if (node.isTextblock) out.push({ pos, text: blockText(node) });
+    return !node.isTextblock;
+  });
+  return out;
+}
+
+/** Shows Claude's suggestions for the given paragraphs (replacing earlier ones there). */
+export const showClaudeSuggestions = (tr: Transaction, blocks: { pos: number; text: string; issues: Issue[] }[]) =>
+  tr.setMeta(spellcheckKey, { type: "claude", blocks } satisfies Meta);
+
 export const ignoreUnderline = (tr: Transaction, u: Underline) => tr.setMeta(spellcheckKey, { type: "ignore", key: ignoreKey(u.kind, u.text) } satisfies Meta);

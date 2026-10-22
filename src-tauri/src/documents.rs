@@ -1,8 +1,9 @@
 //! Opening and saving documents, and the backup copy that keeps unsaved work safe.
 //!
 //! Files: Qalam's own format (.qalam: the editor's document as JSON, so headings, lists,
-//! bold and حركات all survive) and plain text (.txt). The editor turns a document into text
-//! and back; this module only picks paths and reads and writes files.
+//! bold and حركات all survive), Word (.docx) and plain text (.txt). The editor turns a
+//! document into each format and back; this module only picks paths and reads and writes
+//! files. Word files are binary, so they travel to and from the editor as base64.
 //!
 //! Backup: while there are unsaved changes the editor sends its document here every couple of
 //! seconds, and it's written to the app's data folder. If Qalam closes or crashes before the
@@ -10,6 +11,7 @@
 
 use std::path::{Path, PathBuf};
 
+use base64::Engine;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
@@ -18,8 +20,9 @@ use tauri_plugin_dialog::DialogExt;
 pub struct OpenedDocument {
     path: String,
     name: String,
-    /// "qalam" or "text"
+    /// "qalam", "docx" or "text"
     kind: &'static str,
+    /// The file's text; for .docx, its bytes as base64.
     contents: String,
 }
 
@@ -33,6 +36,7 @@ pub struct SavePath {
 fn kind_of(path: &Path) -> &'static str {
     match path.extension().and_then(|e| e.to_str()).map(str::to_lowercase).as_deref() {
         Some("qalam") => "qalam",
+        Some("docx") => "docx",
         _ => "text",
     }
 }
@@ -49,6 +53,10 @@ fn name_of(path: &Path) -> String {
 /// Reads a document. Text must be UTF-8 (a byte-order mark is dropped).
 fn read(path: &Path) -> Result<OpenedDocument, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("Couldn't open {}: {e}", name_of(path)))?;
+    if kind_of(path) == "docx" {
+        let contents = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        return Ok(OpenedDocument { path: path.to_string_lossy().into_owned(), name: name_of(path), kind: "docx", contents });
+    }
     let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes);
     let contents = String::from_utf8(bytes.to_vec())
         .map_err(|_| format!("{} isn't UTF-8 text, so Qalam can't read it yet.", name_of(path)))?;
@@ -56,7 +64,7 @@ fn read(path: &Path) -> Result<OpenedDocument, String> {
 }
 
 /// Writes then renames, so a crash mid-write never leaves a half-written file.
-fn write_atomically(path: &Path, contents: &str) -> Result<(), String> {
+fn write_atomically(path: &Path, contents: impl AsRef<[u8]>) -> Result<(), String> {
     let partial = path.with_extension(format!("{}.partial", path.extension().and_then(|e| e.to_str()).unwrap_or("")));
     std::fs::write(&partial, contents).map_err(|e| format!("Couldn't save {}: {e}", name_of(path)))?;
     std::fs::rename(&partial, path).map_err(|e| format!("Couldn't save {}: {e}", name_of(path)))
@@ -70,8 +78,9 @@ pub async fn open_document(app: AppHandle, current: Option<String>) -> Result<Op
         dialog = dialog.set_directory(folder);
     }
     let picked = dialog
-        .add_filter("Qalam and text documents", &["qalam", "txt"])
+        .add_filter("Documents (Qalam, Word, text)", &["qalam", "docx", "txt"])
         .add_filter("Qalam documents", &["qalam"])
+        .add_filter("Word documents", &["docx"])
         .add_filter("Text", &["txt"])
         .blocking_pick_file();
     match picked {
@@ -96,6 +105,7 @@ pub async fn choose_save_path(app: AppHandle, suggested_name: String, current: O
     let picked = dialog
         .set_file_name(suggested_name)
         .add_filter("Qalam document", &["qalam"])
+        .add_filter("Word document", &["docx"])
         .add_filter("Text", &["txt"])
         .blocking_save_file();
     let Some(file) = picked else { return Ok(None) };
@@ -108,7 +118,14 @@ pub async fn choose_save_path(app: AppHandle, suggested_name: String, current: O
 
 #[tauri::command]
 pub fn write_document(path: String, contents: String) -> Result<(), String> {
-    write_atomically(Path::new(&path), &contents)
+    write_atomically(Path::new(&path), contents)
+}
+
+/// Writes a binary document (.docx), sent as base64.
+#[tauri::command]
+pub fn write_document_base64(path: String, base64: String) -> Result<(), String> {
+    let bytes = base64::engine::general_purpose::STANDARD.decode(base64).map_err(|e| e.to_string())?;
+    write_atomically(Path::new(&path), bytes)
 }
 
 /// A file given on the command line, as when a .qalam file is double-clicked.
@@ -125,7 +142,7 @@ fn backup_path(app: &AppHandle) -> Result<PathBuf, String> {
 pub fn save_backup(app: AppHandle, json: String) -> Result<(), String> {
     let path = backup_path(&app)?;
     std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
-    write_atomically(&path, &json)
+    write_atomically(&path, json)
 }
 
 #[tauri::command]
@@ -169,6 +186,10 @@ mod tests {
         std::fs::write(&text, b"\xEF\xBB\xBFhello\n").unwrap();
         let doc = read(&text).unwrap();
         assert_eq!((doc.kind, doc.contents.as_str()), ("text", "hello\n"));
+        let word = dir.join("letter.docx");
+        std::fs::write(&word, [0x50, 0x4B, 0x03, 0x04]).unwrap();
+        let doc = read(&word).unwrap();
+        assert_eq!((doc.kind, doc.contents.as_str()), ("docx", "UEsDBA=="));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

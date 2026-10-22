@@ -22,8 +22,8 @@ import { HARAKAT, activeHarakat, clearHarakat, setHaraka } from "./editor/haraka
 import { applyResults, previewHtml, targets, type Target } from "./editor/tashkeel";
 import { applyMemory, emptyMemory, learn, recordApplied, type TashkeelMemory } from "./editor/memory";
 import { edits as punctuationEdits, isEnglish, modelInput, words as splitWords } from "./editor/punctuation";
-import { ignoreUnderline, setSpellcheck, spellcheck, spellcheckEnabled, underlineAt, type Issue, type Underline } from "./editor/spellcheck";
-import { displayName, fromQalam, fromText, toQalam, toText, type FileKind } from "./editor/files";
+import { blocksIn, ignoreUnderline, setSpellcheck, showClaudeSuggestions, spellcheck, spellcheckEnabled, underlineAt, type Issue, type Underline } from "./editor/spellcheck";
+import { displayName, fromDocx, fromQalam, fromText, toDocx, toQalam, toText, type FileKind } from "./editor/files";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
@@ -114,6 +114,7 @@ const state = EditorState.create({
       "Mod-Shift-s": () => (saveDocument(true), true),
       // Opens the spelling/grammar card for the underline at the cursor, from the keyboard.
       "Mod-.": () => openSpellCardAtCursor(),
+      "Mod-Shift-g": () => (runDeepCheck(), true),
       "Mod-Shift-t": () => {
         runTashkeel();
         return true;
@@ -559,10 +560,11 @@ async function openSpellCard(target: Underline, anchor: DOMRect) {
   spellCard.dir = arabic ? "rtl" : "ltr";
   $("spell-add").textContent = arabic ? "أضف إلى القاموس" : "Add to dictionary";
   $("spell-add").hidden = target.kind !== "spelling";
+  spellCard.classList.toggle("is-claude", target.kind === "claude");
   $("spell-ignore").textContent = arabic ? "تجاهل" : "Ignore";
   spellNote.hidden = true;
   spellCard.classList.toggle("is-grammar", target.kind === "grammar");
-  if (target.kind === "grammar") showSuggestions(target, { words: target.replacements ?? [], note: target.message ?? null }, arabic);
+  if (target.kind !== "spelling") showSuggestions(target, { words: target.replacements ?? [], note: target.message ?? null }, arabic);
   else spellSuggestions.replaceChildren(suggestionButton("…"));
   spellCard.hidden = false;
 
@@ -602,7 +604,7 @@ function replaceUnderlined(target: Underline, replacement: string) {
 }
 
 function openSpellCardAt(event: MouseEvent): boolean {
-  const el = (event.target as HTMLElement).closest?.(".misspelt, .grammar-issue");
+  const el = (event.target as HTMLElement).closest?.(".misspelt, .grammar-issue, .claude-issue");
   const at = view.posAtCoords({ left: event.clientX, top: event.clientY });
   const target = el && at ? underlineAt(view.state, at.pos) : null;
   if (!el || !target) return false;
@@ -646,7 +648,7 @@ $("spell-ignore").addEventListener("click", () => {
 });
 spellCard.addEventListener("mousedown", (e) => e.preventDefault()); // keep the editor's selection
 document.addEventListener("mousedown", (e) => {
-  if (!spellCard.hidden && !spellCard.contains(e.target as Node) && !(e.target as HTMLElement).closest?.(".misspelt, .grammar-issue")) closeSpellCard();
+  if (!spellCard.hidden && !spellCard.contains(e.target as Node) && !(e.target as HTMLElement).closest?.(".misspelt, .grammar-issue, .claude-issue")) closeSpellCard();
 });
 document.addEventListener("keydown", (e) => {
   // Up and down move between the card's choices when it was opened from the keyboard.
@@ -676,6 +678,51 @@ spellcheckButton.addEventListener("click", () => {
   showSpellcheckButton();
   view.focus();
 });
+
+// ---- Deep check with Claude (opt-in) ----
+// For the grammar the built-in checks can't judge (agreement, كان الجو جميل اليوم, الذي/التي...).
+// The writer asks for it on the paragraph at the cursor or on a selection; Claude's suggestions
+// appear as dotted underlines with a reason, and nothing changes until one is accepted.
+interface Correction { original: string; replacement: string; explanation: string }
+const deepCheckButton = $<HTMLButtonElement>("deep-check");
+
+/** Where each correction's text is in the paragraph (in order, so repeated words line up). */
+function locate(text: string, corrections: Correction[]): Issue[] {
+  const issues: Issue[] = [];
+  let from = 0;
+  for (const c of corrections) {
+    let at = text.indexOf(c.original, from);
+    if (at < 0) at = text.indexOf(c.original);
+    if (at < 0) continue;
+    issues.push({ from: at, to: at + c.original.length, kind: "claude", message: c.explanation, replacements: [c.replacement] });
+    from = at + c.original.length;
+  }
+  return issues;
+}
+
+async function runDeepCheck() {
+  const { from, to, empty, $from } = view.state.selection;
+  const blocks = empty ? blocksIn(view.state.doc, $from.before($from.depth), $from.after($from.depth)) : blocksIn(view.state.doc, from, to);
+  const toCheck = blocks.filter((b) => b.text.trim());
+  if (!toCheck.length) return;
+  deepCheckButton.disabled = true;
+  showDocState("Checking with Claude…");
+  try {
+    const results = await invoke<Correction[][]>("deep_check", { paragraphs: toCheck.map((b) => b.text), english: englishVariant });
+    const found = toCheck.map((b, i) => ({ ...b, issues: locate(b.text, results[i] ?? []) }));
+    view.dispatch(showClaudeSuggestions(view.state.tr, found));
+    const n = found.reduce((sum, b) => sum + b.issues.length, 0);
+    showDocState(n ? `Claude suggests ${n} ${n === 1 ? "change" : "changes"}: click the dotted words` : "Claude found nothing to change here");
+  } catch (e) {
+    const message = String(e).replace(/^Error: /, "");
+    if (message.includes("API key")) openSettings("Add a Claude API key to use the deep check. It's only used when you ask for a check.");
+    showDocState(message);
+  } finally {
+    deepCheckButton.disabled = false;
+  }
+}
+deepCheckButton.addEventListener("mousedown", (e) => e.preventDefault()); // keep the selection
+deepCheckButton.addEventListener("click", () => runDeepCheck());
 
 // ---- Settings: the Claude API key ----
 async function refreshMemoryStatus() {
@@ -737,6 +784,8 @@ let docName: string | null = null; // file name, with extension
 let docKind: FileKind = "qalam";
 let savedDoc = view.state.doc;
 let restoredUnsaved = false;
+// An opened Word file with parts Qalam can't keep yet (tables, images): saving makes a copy.
+let keepOriginal = false;
 const isDirty = () => restoredUnsaved || !view.state.doc.eq(savedDoc);
 
 interface OpenedDocument { path: string; name: string; kind: FileKind; contents: string }
@@ -775,11 +824,12 @@ function documentChanged() {
 }
 
 /** Shows a document in the editor (with a fresh undo history). */
-function loadDocument(doc: PMNode, file: { path: string | null; name: string | null; kind: FileKind }, unsaved = false) {
+function loadDocument(doc: PMNode, file: { path: string | null; name: string | null; kind: FileKind }, unsaved = false, lossy = false) {
   view.updateState(EditorState.create({ doc, plugins: view.state.plugins }));
   ({ path: docPath, name: docName, kind: docKind } = file);
   savedDoc = doc;
   restoredUnsaved = unsaved;
+  keepOriginal = lossy;
   shownDirty = null; // a new name for the window title
   lastTypedDirection = null;
   punctuationJobs.length = 0;
@@ -789,9 +839,20 @@ function loadDocument(doc: PMNode, file: { path: string | null; name: string | n
   view.focus();
 }
 
-function parseDocument(opened: OpenedDocument): PMNode {
-  return opened.kind === "qalam" ? fromQalam(schema, opened.contents) : fromText(schema, opened.contents);
+async function parseDocument(opened: OpenedDocument): Promise<{ doc: PMNode; lossy: boolean }> {
+  if (opened.kind === "docx") return fromDocx(schema, opened.contents);
+  return { doc: opened.kind === "qalam" ? fromQalam(schema, opened.contents) : fromText(schema, opened.contents), lossy: false };
 }
+
+/** Opens a document in the editor, with a note when a Word file had parts Qalam can't show. */
+async function showOpened(opened: OpenedDocument) {
+  const { doc, lossy } = await parseDocument(opened);
+  loadDocument(doc, opened, false, lossy);
+  if (lossy) showDocState("Tables and images in this Word file aren't shown yet. Saving will make a copy, so the original stays as it was.");
+}
+
+// Word font names for the Arabic fonts Qalam bundles (Word falls back if one isn't installed).
+const WORD_ARABIC_FONTS: Record<string, string> = { amiri: "Amiri", vazirmatn: "Vazirmatn", scheherazade: "Scheherazade New" };
 
 // "Save your changes?": resolves to whether it's fine to go on (saved, or the writer chose not to).
 const unsavedDialog = $<HTMLDialogElement>("unsaved");
@@ -829,7 +890,7 @@ async function openDocument() {
   try {
     const opened = await invoke<OpenedDocument | null>("open_document", { current: docPath });
     if (!opened) return;
-    loadDocument(parseDocument(opened), opened);
+    await showOpened(opened);
     invoke("clear_backup").catch(() => {});
   } catch (e) {
     showDocState(String(e).replace(/^Error: /, ""));
@@ -839,13 +900,20 @@ async function openDocument() {
 /** Saves to the document's file, or asks where (always, for "Save as"). True once saved. */
 async function saveDocument(saveAs = false): Promise<boolean> {
   try {
-    if (!docPath || saveAs) {
-      const choice = await invoke<SavePath | null>("choose_save_path", { suggestedName: `${displayName(docName)}.qalam`, current: docPath });
+    if (!docPath || saveAs || keepOriginal) {
+      const suggested = keepOriginal ? `${displayName(docName)} (Qalam).docx` : `${displayName(docName)}.${docKind === "docx" ? "docx" : "qalam"}`;
+      const choice = await invoke<SavePath | null>("choose_save_path", { suggestedName: suggested, current: docPath });
       if (!choice) return false;
       ({ path: docPath, name: docName, kind: docKind } = choice);
+      keepOriginal = false;
     }
     const doc = view.state.doc;
-    await invoke("write_document", { path: docPath, contents: docKind === "qalam" ? toQalam(doc) : toText(doc) });
+    if (docKind === "docx") {
+      const arabicFont = WORD_ARABIC_FONTS[document.documentElement.dataset.arabicFont ?? "amiri"] ?? "Amiri";
+      await invoke("write_document_base64", { path: docPath, base64: await toDocx(doc, { arabicFont, latinFont: "Noto Serif" }) });
+    } else {
+      await invoke("write_document", { path: docPath, contents: docKind === "qalam" ? toQalam(doc) : toText(doc) });
+    }
     savedDoc = doc;
     restoredUnsaved = false;
     shownDirty = null;
@@ -908,8 +976,7 @@ listen("close-requested", async () => {
   try {
     const path = await invoke<string | null>("startup_document");
     if (path) {
-      const opened = await invoke<OpenedDocument>("read_document", { path });
-      loadDocument(parseDocument(opened), opened);
+      await showOpened(await invoke<OpenedDocument>("read_document", { path }));
       return;
     }
     const json = await invoke<string | null>("load_backup");

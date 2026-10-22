@@ -1,12 +1,13 @@
 // Turning the editor's document into a file and back.
 //
 // .qalam: the document exactly as the editor holds it (headings, lists, bold, حركات), as JSON.
+// .docx: Word, see the end of this file.
 // .txt: plain text. Paragraphs are separated by a blank line; a single line break inside a
 // paragraph stays a line break; list items are written "- item" or "1. item".
 
-import type { Node as PMNode, Schema } from "prosemirror-model";
+import { DOMParser as PMDOMParser, type Node as PMNode, type Schema } from "prosemirror-model";
 
-export type FileKind = "qalam" | "text";
+export type FileKind = "qalam" | "docx" | "text";
 
 const FORMAT_VERSION = 1;
 
@@ -83,5 +84,129 @@ export function fromText(schema: Schema, text: string): PMNode {
 
 /** "رسالة.qalam" → "رسالة"; a name for a document that has none yet. */
 export function displayName(fileName: string | null): string {
-  return fileName ? fileName.replace(/\.(qalam|txt)$/i, "") : "Untitled";
+  return fileName ? fileName.replace(/\.(qalam|docx|txt)$/i, "") : "Untitled";
+}
+
+// ---- Word (.docx) ----
+// Reading uses mammoth (BSD-2): Word → HTML → the editor's schema. Each paragraph's direction
+// comes from its text, as everywhere in Qalam, so nothing is lost by not reading Word's flag.
+// Writing uses docx (MIT): Arabic paragraphs are marked right-to-left (w:bidi), Arabic runs as
+// right-to-left text (w:rtl), and the Arabic font goes in Word's "complex script" slot, which
+// Word uses for Arabic letters.
+
+
+const ARABIC = /[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]/;
+const LATIN = /[A-Za-z]/;
+
+function base64ToBytes(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+export async function fromDocx(schema: Schema, base64: string): Promise<{ doc: PMNode; lossy: boolean }> {
+  const { default: mammoth } = await import("mammoth");
+  const bytes = base64ToBytes(base64);
+  const result = await mammoth.convertToHtml(
+    { arrayBuffer: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer },
+    {
+      // Word's title and headings become Qalam's two heading levels.
+      styleMap: ["p[style-name='Title'] => h1:fresh", "p[style-name='Subtitle'] => h2:fresh", "p[style-name='Heading 3'] => h2:fresh"],
+      ignoreEmptyParagraphs: false,
+    },
+  );
+  const html = new DOMParser().parseFromString(`<body>${result.value}</body>`, "text/html");
+  // Images and tables aren't in Qalam yet (their text is kept as plain paragraphs), so saving
+  // over such a file would lose them: the caller saves a copy instead.
+  const lossy = !!html.body.querySelector("img, table");
+  return { doc: PMDOMParser.fromSchema(schema).parse(html.body), lossy };
+}
+
+export interface DocxOptions {
+  /** The Arabic font's name as Word knows it, e.g. "Amiri". */
+  arabicFont: string;
+  latinFont: string;
+}
+
+export async function toDocx(doc: PMNode, options: DocxOptions): Promise<string> {
+  const docx = await import("docx");
+  const { Document, Packer, Paragraph, TextRun, HeadingLevel, LevelFormat, AlignmentType } = docx;
+  const font = { ascii: options.latinFont, hAnsi: options.latinFont, cs: options.arabicFont };
+
+  const runs = (block: PMNode) => {
+    const out: InstanceType<typeof TextRun>[] = [];
+    block.forEach((child) => {
+      if (child.type.name === "hard_break") {
+        out.push(new TextRun({ break: 1 }));
+        return;
+      }
+      if (!child.isText) return;
+      const bold = child.marks.some((m) => m.type.name === "strong");
+      const italics = child.marks.some((m) => m.type.name === "em");
+      out.push(
+        new TextRun({
+          text: child.text!,
+          font,
+          bold,
+          boldComplexScript: bold,
+          italics,
+          italicsComplexScript: italics,
+          rightToLeft: ARABIC.test(child.text!),
+        }),
+      );
+    });
+    return out;
+  };
+
+  /** Right-to-left when the paragraph's first strong letter is Arabic, as in the editor. */
+  const isRtl = (block: PMNode) => {
+    for (const ch of block.textContent) {
+      if (ARABIC.test(ch)) return true;
+      if (LATIN.test(ch)) return false;
+    }
+    return false;
+  };
+
+  const paragraphs: InstanceType<typeof Paragraph>[] = [];
+  const walk = (node: PMNode, list?: { ordered: boolean; level: number }) => {
+    node.forEach((child) => {
+      if (child.isTextblock) {
+        const heading =
+          child.type.name === "heading" ? (child.attrs.level === 1 ? HeadingLevel.HEADING_1 : HeadingLevel.HEADING_2) : undefined;
+        paragraphs.push(
+          new Paragraph({
+            children: runs(child),
+            heading,
+            bidirectional: isRtl(child),
+            ...(list ? (list.ordered ? { numbering: { reference: "qalam-numbers", level: list.level } } : { bullet: { level: list.level } }) : {}),
+          }),
+        );
+      } else if (child.type.name === "bullet_list" || child.type.name === "ordered_list") {
+        walk(child, { ordered: child.type.name === "ordered_list", level: list ? Math.min(list.level + 1, 8) : 0 });
+      } else {
+        walk(child, list);
+      }
+    });
+  };
+  walk(doc);
+
+  const document = new Document({
+    styles: { default: { document: { run: { font, size: 24, sizeComplexScript: 28 } } } },
+    numbering: {
+      config: [
+        {
+          reference: "qalam-numbers",
+          levels: Array.from({ length: 9 }, (_, level) => ({
+            level,
+            format: LevelFormat.DECIMAL,
+            text: `%${level + 1}.`,
+            alignment: AlignmentType.START,
+          })),
+        },
+      ],
+    },
+    sections: [{ children: paragraphs }],
+  });
+  return Packer.toBase64String(document);
 }

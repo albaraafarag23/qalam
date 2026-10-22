@@ -35,6 +35,7 @@ spellbook = "0.3"
 # ~5 MB and Qalam doesn't use it.
 harper-core = { version = "2.13", default-features = false, features = ["concurrent"] }
 tauri-plugin-dialog = "2"
+base64 = "0.22"
 
 # Windows only: reach the WebView2 settings that Tauri doesn't expose (see lib.rs).
 [target.'cfg(windows)'.dependencies]

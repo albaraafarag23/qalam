@@ -8,7 +8,7 @@
   </head>
   <body>
     <header class="toolbar">
-      <span class="brand">Qalam <span class="brand-ar">قلم</span></span>
+      <span class="brand"><span class="brand-en">Qalam </span><span class="brand-ar">قلم</span></span>
       <div class="tools">
         <button data-cmd="h1" title="Heading (Ctrl+Alt+1)">H1</button>
         <button data-cmd="h2" title="Subheading (Ctrl+Alt+2)">H2</button>
@@ -124,6 +124,7 @@
       <span class="status-left">
         <span id="doc-status" class="doc-status"></span>
         <span id="words">0 words</span>
+        <button id="deep-check" class="status-toggle" title="Ask Claude to check the paragraph at the cursor, or the selection, for grammar the built-in checks can't judge (Ctrl+Shift+G)">✦ Check with Claude</button>
         <button id="spellcheck-toggle" class="status-toggle" title="Underlines misspelt Arabic and English words; click one for suggestions">Spellcheck: on</button>
         <button id="auto-punct" class="status-toggle" title="Adds missing capitals and punctuation to an English paragraph when you press Enter at its end">Auto-punctuation: on</button>
       </span>
