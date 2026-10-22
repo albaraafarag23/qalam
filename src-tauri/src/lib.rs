@@ -65,6 +65,8 @@ pub fn run() {
             claude::clear_api_key,
             claude::diacritize,
             claude::deep_check,
+            claude::transform,
+            claude::synonyms,
             memory::load_tashkeel_memory,
             memory::save_tashkeel_memory,
             offline::offline_model_installed,

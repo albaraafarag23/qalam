@@ -93,8 +93,9 @@ body { -webkit-user-select: none; user-select: none; }
   right: 0;
   z-index: 5;
   display: flex;
+  flex-wrap: wrap; /* a narrow window gets a second row rather than tools cut off */
   align-items: center;
-  gap: 12px;
+  gap: 8px 12px;
   padding: 10px 14px;
   background: var(--bar);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
@@ -105,7 +106,7 @@ body { -webkit-user-select: none; user-select: none; }
 .brand-ar { color: var(--accent); margin-inline-start: 4px; }
 /* In a narrow window the toolbar needs the room (the Arabic tools are wide): just «قلم». */
 @media (max-width: 1180px) { .brand-en { display: none; } .brand-ar { margin-inline-start: 0; } }
-.tools { display: flex; align-items: center; gap: 3px; min-height: 36px; } /* as tall as the حركات buttons, so showing them doesn't move anything */
+.tools { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; min-height: 36px; } /* as tall as the حركات buttons, so showing them doesn't move anything */
 .tools button {
   min-width: 34px;
   height: 30px;
@@ -146,7 +147,7 @@ body { -webkit-user-select: none; user-select: none; }
 .tools button.active, .tools button.active:hover { background: var(--accent); color: var(--paper); }
 .sep { width: 1px; height: 18px; background: var(--rule); margin: 0 6px; }
 
-.desk { flex: 1; overflow-y: auto; padding: 100px 16px 80px; } /* top: room for the floating toolbar */
+.desk { flex: 1; overflow-y: auto; padding: calc(var(--toolbar-h, 56px) + 44px) 16px 80px; } /* top: room for the floating toolbar */
 
 /* An A4-proportioned sheet; real pagination comes later. */
 .page {
@@ -323,8 +324,8 @@ button.primary, button.primary:hover { background: var(--accent); color: var(--p
   .arabic-tools > *, .arabic-tools .haraka, .arabic-tools .tashkeel, .arabic-tools #tashkeel-mode, .arabic-tools.leaving { animation: none; }
 }
 
-/* ---- File menu and save status ---- */
-.file-menu {
+/* ---- Menus (File, ✦ Claude, case, synonyms) and save status ---- */
+.menu {
   position: fixed;
   z-index: 20;
   min-width: 230px;
@@ -335,8 +336,8 @@ button.primary, button.primary:hover { background: var(--accent); color: var(--p
   box-shadow: var(--shadow);
   animation: spell-in 140ms var(--ease);
 }
-.file-menu[hidden] { display: none; }
-.file-menu button {
+.menu[hidden] { display: none; }
+.menu button {
   display: flex;
   justify-content: space-between;
   gap: 18px;
@@ -351,13 +352,17 @@ button.primary, button.primary:hover { background: var(--accent); color: var(--p
   text-align: start;
   cursor: pointer;
 }
-.file-menu button:hover, .file-menu button:focus-visible { background: var(--hover); outline: none; }
-.file-menu kbd { color: var(--ink-soft); font: inherit; font-size: 12px; }
-.file-menu hr { border: 0; border-top: 1px solid var(--rule); margin: 4px 6px; }
+.menu button:hover, .menu button:focus-visible { background: var(--hover); outline: none; }
+.menu kbd { color: var(--ink-soft); font: inherit; font-size: 12px; }
+.menu hr { border: 0; border-top: 1px solid var(--rule); margin: 4px 6px; }
+.menu-note { margin: 6px 10px 4px; max-width: 260px; color: var(--ink-soft); font-size: 12px; line-height: 1.5; }
+.menu .synonym { font-family: var(--doc-font); font-size: 16px; }
+.menu .menu-empty { padding: 6px 10px; color: var(--ink-soft); font-size: 13px; }
+.tools button.word-tool { font-size: 13px; }
 .icon-button svg { display: block; margin: auto; }
 .doc-status:empty { display: none; }
 .doc-status.is-dirty::before { content: "• "; color: var(--accent); }
-@media (prefers-reduced-motion: reduce) { .file-menu { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .menu { animation: none; } }
 
 /* ---- Images ---- */
 /* In the text like in Word, never wider than the page. */

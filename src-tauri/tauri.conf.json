@@ -14,8 +14,8 @@
     "windows": [
       {
         "title": "Qalam",
-        "width": 1100,
-        "height": 800,
+        "width": 1280,
+        "height": 860,
         "minWidth": 600,
         "minHeight": 400
       }

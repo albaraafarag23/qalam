@@ -36,10 +36,22 @@
           <select id="tashkeel-mode" title="مستوى التشكيل">
             <option value="light">خفيف</option>
             <option value="full">كامل</option>
+            <option value="remove">إزالة</option>
           </select>
+          <button id="synonyms-ar" class="word-tool" title="✦ مرادفات للكلمة عند المؤشر (Claude)">مرادفات</button>
+        </div>
+        <!-- Shown only while writing English. -->
+        <div id="english-tools" class="arabic-tools english-tools" hidden>
+          <span class="sep"></span>
+          <button id="punctuate" class="word-tool" title="Add missing capitals and punctuation to this paragraph or the selection (works offline)">Punctuate</button>
+          <button id="case-button" class="word-tool" title="Change case: Sentence case, Title Case, lowercase, UPPERCASE" aria-haspopup="menu">Aa ▾</button>
+          <button id="synonyms-en" class="word-tool" title="✦ Synonyms for the word at the cursor, chosen for this sentence (Claude)">Synonyms</button>
         </div>
       </div>
       <div class="toolbar-end">
+        <button id="claude-button" class="icon-button" title="✦ Claude: check grammar, rewrite, translate" aria-haspopup="menu" aria-expanded="false">
+          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M8 1.5l1.4 4.1 4.1 1.4-4.1 1.4L8 12.5 6.6 8.4 2.5 7l4.1-1.4z M13 11l.6 1.5 1.4.5-1.4.5L13 15l-.6-1.5-1.4-.5 1.4-.5z" fill="currentColor"/></svg>
+        </button>
         <button id="file-button" class="icon-button" title="File: new, open, save · ملف" aria-haspopup="menu" aria-expanded="false">
           <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M4 1.5h5.5L13 5v9.5H4z M9.5 1.5V5H13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
         </button>
@@ -48,7 +60,28 @@
       </div>
     </header>
 
-    <div id="file-menu" class="file-menu" role="menu" hidden>
+    <div id="claude-menu" class="menu" role="menu" hidden>
+      <button data-action="check" role="menuitem"><span>Check grammar · تدقيق</span><kbd>Ctrl+Shift+G</kbd></button>
+      <hr />
+      <button data-action="formal" role="menuitem"><span>Rewrite: more formal · أكثر رسمية</span></button>
+      <button data-action="friendly" role="menuitem"><span>Rewrite: friendlier · أكثر ودًّا</span></button>
+      <button data-action="shorter" role="menuitem"><span>Rewrite: shorter · أقصر</span></button>
+      <button data-action="clearer" role="menuitem"><span>Rewrite: clearer · أوضح</span></button>
+      <hr />
+      <button data-action="translate" role="menuitem"><span>Translate Arabic ⇄ English · ترجمة</span></button>
+      <p class="menu-note">Works on the paragraph at the cursor, or the selection. Needs a Claude API key.</p>
+    </div>
+
+    <div id="case-menu" class="menu" role="menu" hidden>
+      <button data-case="sentence" role="menuitem"><span>Sentence case</span></button>
+      <button data-case="title" role="menuitem"><span>Title Case</span></button>
+      <button data-case="lower" role="menuitem"><span>lowercase</span></button>
+      <button data-case="upper" role="menuitem"><span>UPPERCASE</span></button>
+    </div>
+
+    <div id="synonym-menu" class="menu" role="menu" hidden></div>
+
+    <div id="file-menu" class="menu" role="menu" hidden>
       <button data-file="new" role="menuitem"><span>New · جديد</span><kbd>Ctrl+N</kbd></button>
       <button data-file="open" role="menuitem"><span>Open… · فتح</span><kbd>Ctrl+O</kbd></button>
       <hr />
@@ -127,7 +160,6 @@
       <span class="status-left">
         <span id="doc-status" class="doc-status"></span>
         <span id="words">0 words</span>
-        <button id="deep-check" class="status-toggle" title="Ask Claude to check the paragraph at the cursor, or the selection, for grammar the built-in checks can't judge (Ctrl+Shift+G)">✦ Check with Claude</button>
         <button id="spellcheck-toggle" class="status-toggle" title="Underlines misspelt Arabic and English words; click one for suggestions">Spellcheck: on</button>
         <button id="auto-punct" class="status-toggle" title="Adds missing capitals and punctuation to an English paragraph when you press Enter at its end">Auto-punctuation: on</button>
       </span>

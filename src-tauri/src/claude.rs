@@ -226,6 +226,81 @@ pub async fn deep_check(paragraphs: Vec<String>, english: String) -> Result<Vec<
     Ok(paragraphs.iter().zip(reply.paragraphs).map(|(p, checked)| usable(p, checked.corrections)).collect())
 }
 
+// ---- Rewrite and translate ----
+// Opt-in like the deep check: the writer picks an action, sees the result in a preview and
+// decides. Each paragraph comes back as one paragraph, in the same order.
+
+fn transform_instructions(action: &str, english: &str) -> Result<String, String> {
+    let spelling = if english == "gb" { "British" } else { "American" };
+    let keep = "Keep the meaning, the facts, names and numbers exactly. Keep each paragraph's language \
+                unless asked to translate. Don't add headings, quotes, notes or explanations: return only \
+                the text.";
+    let task = match action {
+        "formal" => "Rewrite each paragraph in a more formal, professional register (for Arabic, careful \
+                     Modern Standard Arabic; for English, polished business English).",
+        "friendly" => "Rewrite each paragraph in a warmer, friendlier, more conversational tone, still correct.",
+        "shorter" => "Make each paragraph shorter and tighter: cut repetition and filler, keep every point.",
+        "clearer" => "Rewrite each paragraph to be clearer and easier to read: simpler sentences, clear order, \
+                      no jargon, same content.",
+        "translate" => "Translate each paragraph: Arabic paragraphs into natural English, English paragraphs \
+                        into natural Modern Standard Arabic. A paragraph that mixes both goes into the \
+                        language that is not its main one. Translate meaning, not word for word.",
+        _ => return Err(format!("Unknown action: {action}")),
+    };
+    Ok(format!(
+        "You are an expert editor and translator for Arabic and English. {task} {keep} \
+         Fix any spelling and grammar mistakes as you go. Use {spelling} spelling for English. \
+         Write Arabic without diacritics unless the original has them."
+    ))
+}
+
+/// Rewrites or translates each paragraph. `action`: formal, friendly, shorter, clearer, translate.
+#[tauri::command]
+pub async fn transform(paragraphs: Vec<String>, action: String, english: String) -> Result<Vec<String>, String> {
+    let system = transform_instructions(&action, &english)?;
+    let input = serde_json::to_string(&paragraphs).map_err(|e| e.to_string())?;
+    let schema = json!({
+        "type": "object",
+        "properties": { "paragraphs": { "type": "array", "items": { "type": "string" } } },
+        "required": ["paragraphs"],
+        "additionalProperties": false
+    });
+    let text = ask(system, format!("Paragraphs (JSON array):\n{input}"), schema, "medium").await?;
+    let parsed: Diacritized = serde_json::from_str(&text).map_err(|e| format!("Unexpected reply format: {e}"))?;
+    if parsed.paragraphs.len() != paragraphs.len() {
+        return Err("Claude returned a different number of paragraphs.".into());
+    }
+    Ok(parsed.paragraphs)
+}
+
+// ---- Synonyms ----
+// Words that could replace one word in its sentence, keeping the meaning it has there. Claude
+// sees the sentence, so "bank" by a river and "bank" with money get different words.
+
+#[derive(Deserialize)]
+struct SynonymReply {
+    synonyms: Vec<String>,
+}
+
+#[tauri::command]
+pub async fn synonyms(word: String, sentence: String) -> Result<Vec<String>, String> {
+    let schema = json!({
+        "type": "object",
+        "properties": { "synonyms": { "type": "array", "items": { "type": "string" } } },
+        "required": ["synonyms"],
+        "additionalProperties": false
+    });
+    let system = "You suggest synonyms for one word as it is used in a sentence, in Arabic or English. \
+                  Give up to 8 words or short phrases that could replace it in that sentence with the same \
+                  meaning, best first, already in the right form for the sentence (number, gender, tense, \
+                  definite article and attached letters for Arabic). Same language as the word. No \
+                  explanations; an empty list if there are none.";
+    let user = format!("Sentence: {sentence}\nWord: {word}");
+    let text = ask(system.to_string(), user, schema, "low").await?;
+    let reply: SynonymReply = serde_json::from_str(&text).map_err(|e| format!("Unexpected reply format: {e}"))?;
+    Ok(reply.synonyms.into_iter().filter(|s| !s.trim().is_empty() && s.trim() != word.trim()).take(8).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -244,5 +319,13 @@ mod tests {
         assert_eq!(kept[0].len(), 1);
         assert_eq!(kept[0][0].replacement, "ذهبوا");
         assert!(kept[1].is_empty());
+    }
+
+    #[test]
+    fn every_action_has_instructions() {
+        for action in ["formal", "friendly", "shorter", "clearer", "translate"] {
+            assert!(transform_instructions(action, "gb").unwrap().contains("British"));
+        }
+        assert!(transform_instructions("poem", "us").is_err());
     }
 }

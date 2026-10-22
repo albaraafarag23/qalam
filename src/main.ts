@@ -225,38 +225,44 @@ function updateStatus() {
   // text), or on an empty line that follows Arabic.
   const arabic =
     dir === "rtl" || lastTypedDirection === "rtl" || (!dir && !lastTypedDirection && directionAt(view.state) === "rtl");
+  const english = !arabic && (dir === "ltr" || lastTypedDirection === "ltr" || (!dir && directionAt(view.state) === "ltr"));
   showArabicTools(arabic);
+  showEnglishTools(english);
 }
 
-// The Arabic tools ease in, button by button, and ease out instead of vanishing. Hiding
+// The language tools ease in, button by button, and ease out instead of vanishing. Hiding
 // waits a moment so moving the cursor across a mixed document doesn't make them flicker.
-const arabicTools = document.getElementById("arabic-tools")!;
-let hideTimer: number | undefined;
-function showArabicTools(show: boolean) {
-  const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  if (show) {
-    clearTimeout(hideTimer);
-    hideTimer = undefined;
-    if (arabicTools.hidden || arabicTools.classList.contains("leaving")) {
-      arabicTools.classList.remove("leaving");
-      arabicTools.hidden = false;
-    }
-    return;
-  }
-  if (arabicTools.hidden || hideTimer !== undefined) return;
-  if (reduceMotion) {
-    arabicTools.hidden = true;
-    return;
-  }
-  hideTimer = window.setTimeout(() => {
-    arabicTools.classList.add("leaving");
-    hideTimer = window.setTimeout(() => {
-      arabicTools.hidden = true;
-      arabicTools.classList.remove("leaving");
+function toolGroup(el: HTMLElement) {
+  let hideTimer: number | undefined;
+  return (show: boolean) => {
+    const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (show) {
+      clearTimeout(hideTimer);
       hideTimer = undefined;
-    }, 260);
-  }, 350);
+      if (el.hidden || el.classList.contains("leaving")) {
+        el.classList.remove("leaving");
+        el.hidden = false;
+      }
+      return;
+    }
+    if (el.hidden || hideTimer !== undefined) return;
+    if (reduceMotion) {
+      el.hidden = true;
+      return;
+    }
+    hideTimer = window.setTimeout(() => {
+      el.classList.add("leaving");
+      hideTimer = window.setTimeout(() => {
+        el.hidden = true;
+        el.classList.remove("leaving");
+        hideTimer = undefined;
+      }, 260);
+    }, 350);
+  };
 }
+const arabicTools = document.getElementById("arabic-tools")!;
+const showArabicTools = toolGroup(arabicTools);
+const showEnglishTools = toolGroup(document.getElementById("english-tools")!);
 
 // The buttons are centred on their ink, not the font's line box, which would push marks
 // against the button's edges. Marks above the letter share one baseline and marks below
@@ -330,8 +336,27 @@ const saveMemory = () => invoke("save_tashkeel_memory", { json: JSON.stringify(m
 
 // Claude when there's an API key (best accuracy), otherwise the offline CATT model; if
 // Claude fails (no internet, rate limit), fall back to offline automatically.
+/** Removes every حركة in the selection, or in the paragraph at the cursor. */
+function removeTashkeel() {
+  const { from, to, empty, $from } = view.state.selection;
+  const [start, end] = empty ? [$from.start(), $from.end()] : [from, to];
+  const tr = view.state.tr;
+  view.state.doc.nodesBetween(start, end, (node, pos) => {
+    if (!node.isText) return;
+    const text = node.text!;
+    for (let i = text.length - 1; i >= 0; i--) {
+      const at = pos + i;
+      if (at >= start && at < end && /[\u064B-\u0652\u0670]/.test(text[i])) tr.delete(tr.mapping.map(at), tr.mapping.map(at + 1));
+    }
+  });
+  if (tr.docChanged) view.dispatch(tr);
+  else showDocState("لا توجد حركات هنا · No تشكيل here");
+  view.focus();
+}
+
 async function runTashkeel() {
   if (tashkeelBtn.disabled) return;
+  if (modePicker.value === "remove") return removeTashkeel();
   const ts = targets(view.state);
   if (!ts.length) {
     showNote("لا يوجد نص عربي هنا · No Arabic text here");
@@ -434,10 +459,15 @@ function showPreview(ts: Target[], results: string[], light: boolean, engine: st
 function closePreview() {
   preview.hidden = true;
   pending = null;
+  pendingTransform = null;
   view.focus();
 }
 
 $("preview-accept").addEventListener("click", () => {
+  if (pendingTransform) {
+    if (acceptTransform()) closePreview();
+    return;
+  }
   // If the text changed while the preview was open, the positions no longer line up.
   if (pending && pending.doc.eq(view.state.doc)) {
     const { tr } = applyResults(view.state, pending.ts, pending.results);
@@ -744,7 +774,7 @@ insertImageButton.addEventListener("click", async () => {
 // The writer asks for it on the paragraph at the cursor or on a selection; Claude's suggestions
 // appear as dotted underlines with a reason, and nothing changes until one is accepted.
 interface Correction { original: string; replacement: string; explanation: string }
-const deepCheckButton = $<HTMLButtonElement>("deep-check");
+const claudeButton = $<HTMLButtonElement>("claude-button");
 
 /** Where each correction's text is in the paragraph (in order, so repeated words line up). */
 function locate(text: string, corrections: Correction[]): Issue[] {
@@ -765,7 +795,7 @@ async function runDeepCheck() {
   const blocks = empty ? blocksIn(view.state.doc, $from.before($from.depth), $from.after($from.depth)) : blocksIn(view.state.doc, from, to);
   const toCheck = blocks.filter((b) => b.text.trim());
   if (!toCheck.length) return;
-  deepCheckButton.disabled = true;
+  claudeButton.disabled = true;
   showDocState("Checking with Claude…");
   try {
     const results = await invoke<Correction[][]>("deep_check", { paragraphs: toCheck.map((b) => b.text), english: englishVariant });
@@ -774,15 +804,224 @@ async function runDeepCheck() {
     const n = found.reduce((sum, b) => sum + b.issues.length, 0);
     showDocState(n ? `Claude suggests ${n} ${n === 1 ? "change" : "changes"}: click the dotted words` : "Claude found nothing to change here");
   } catch (e) {
-    const message = String(e).replace(/^Error: /, "");
-    if (message.includes("API key")) openSettings("Add a Claude API key to use the deep check. It's only used when you ask for a check.");
-    showDocState(message);
+    claudeError(e);
   } finally {
-    deepCheckButton.disabled = false;
+    claudeButton.disabled = false;
   }
 }
-deepCheckButton.addEventListener("mousedown", (e) => e.preventDefault()); // keep the selection
-deepCheckButton.addEventListener("click", () => runDeepCheck());
+
+/** A failed Claude request: without a key, Settings opens to add one. */
+function claudeError(e: unknown) {
+  const message = String(e).replace(/^Error: /, "");
+  if (message.includes("API key")) openSettings("Add a Claude API key to use the ✦ tools. It's only used when you ask for one.");
+  showDocState(message);
+}
+
+// The paragraphs a tool works on: the selection, or the paragraph at the cursor.
+function targetBlocks() {
+  const { from, to, empty, $from } = view.state.selection;
+  const blocks = empty ? blocksIn(view.state.doc, $from.before($from.depth), $from.after($from.depth)) : blocksIn(view.state.doc, from, to);
+  return blocks.filter((b) => b.text.trim());
+}
+
+// ---- ✦ Rewrite and translate (Claude), shown in the preview before anything changes ----
+let pendingTransform: { blocks: { pos: number; text: string }[]; results: string[]; doc: PMNode } | null = null;
+const TRANSFORM_TITLES: Record<string, string> = {
+  formal: "Rewrite: more formal · أكثر رسمية",
+  friendly: "Rewrite: friendlier · أكثر ودًّا",
+  shorter: "Rewrite: shorter · أقصر",
+  clearer: "Rewrite: clearer · أوضح",
+  translate: "Translation · ترجمة",
+};
+
+async function runTransform(action: string) {
+  const blocks = targetBlocks();
+  if (!blocks.length) return;
+  claudeButton.disabled = true;
+  showDocState(action === "translate" ? "Translating with Claude…" : "Rewriting with Claude…");
+  try {
+    const results = await invoke<string[]>("transform", { paragraphs: blocks.map((b) => b.text), action, english: englishVariant });
+    showNote(TRANSFORM_TITLES[action]);
+    pendingTransform = { blocks, results, doc: view.state.doc };
+    const body = $("preview-body");
+    body.replaceChildren(
+      ...results.map((r) => {
+        const p = document.createElement("p");
+        p.dir = "auto";
+        p.textContent = r;
+        return p;
+      }),
+    );
+    $("preview-note").textContent = "✦ Claude · bold and italic inside these paragraphs aren't kept";
+    $<HTMLButtonElement>("preview-accept").hidden = false;
+    showDocState();
+  } catch (e) {
+    claudeError(e);
+  } finally {
+    claudeButton.disabled = false;
+  }
+}
+
+/** Puts the accepted rewrite or translation in place of the paragraphs, one undo step.
+    False when the text changed meanwhile (a note says so). */
+function acceptTransform(): boolean {
+  const t = pendingTransform!;
+  pendingTransform = null;
+  if (!t.doc.eq(view.state.doc)) {
+    showNote("The text changed meanwhile. Ask again.");
+    return false;
+  }
+  let tr = view.state.tr;
+  for (let i = t.blocks.length - 1; i >= 0; i--) {
+    const { pos } = t.blocks[i];
+    const node = tr.doc.nodeAt(pos)!;
+    const content: PMNode[] = [];
+    t.results[i].split("\n").forEach((line, j) => {
+      if (j) content.push(schema.nodes.hard_break.create());
+      if (line) content.push(schema.text(line));
+    });
+    tr = tr.replaceWith(pos + 1, pos + node.nodeSize - 1, content);
+  }
+  view.dispatch(tr.scrollIntoView());
+  return true;
+}
+
+menuButton(claudeButton, $("claude-menu"), (item) => {
+  const action = item.dataset.action!;
+  if (action === "check") runDeepCheck();
+  else runTransform(action);
+});
+
+// ---- Case (English): Sentence case, Title Case, lowercase, UPPERCASE ----
+const SMALL_WORDS = new Set(["a", "an", "the", "and", "but", "or", "nor", "for", "so", "yet", "as", "at", "by", "in", "of", "off", "on", "per", "to", "up", "via", "from", "into", "with", "over"]);
+function changeCase(text: string, kind: string): string {
+  if (kind === "upper") return text.toUpperCase();
+  if (kind === "lower") return text.toLowerCase();
+  if (kind === "sentence") {
+    const lower = text.toLowerCase();
+    return lower.replace(/(^\s*|[.!?]\s+)([a-z])/g, (_m, before: string, letter: string) => before + letter.toUpperCase());
+  }
+  // Title Case: every word capitalised except short joining words, which are capitalised
+  // only at the start and end.
+  const words = [...text.matchAll(/[A-Za-z][A-Za-z'’]*/g)];
+  let out = text;
+  words.forEach((m, i) => {
+    const w = m[0];
+    const small = SMALL_WORDS.has(w.toLowerCase()) && i > 0 && i < words.length - 1;
+    const replaced = small ? w.toLowerCase() : w[0].toUpperCase() + w.slice(1).toLowerCase();
+    out = out.slice(0, m.index!) + replaced + out.slice(m.index! + w.length);
+  });
+  return out;
+}
+
+/** Applies a case change to the selection (or the word at the cursor), keeping bold and italic. */
+function applyCase(kind: string) {
+  let { from, to } = view.state.selection;
+  if (from === to) {
+    const word = wordRange();
+    if (!word) return;
+    ({ from, to } = word);
+  }
+  const tr = view.state.tr;
+  // Paragraph by paragraph; each text piece keeps its own bold/italic. Lengths don't change, so
+  // positions stay valid as pieces are replaced.
+  view.state.doc.nodesBetween(from, to, (block, blockPos) => {
+    if (!block.isTextblock) return true;
+    const start = Math.max(from, blockPos + 1);
+    const end = Math.min(to, blockPos + block.nodeSize - 1);
+    const whole = view.state.doc.textBetween(start, end, undefined, "\ufffc");
+    const changed = changeCase(whole, kind);
+    if (changed.length !== whole.length) return false; // a letter whose case is longer (ß): leave it
+    block.forEach((child, childOffset) => {
+      const childStart = blockPos + 1 + childOffset;
+      const a = Math.max(start, childStart);
+      const b = Math.min(end, childStart + child.nodeSize);
+      if (!child.isText || a >= b) return;
+      const piece = changed.slice(a - start, b - start);
+      if (piece !== child.text!.slice(a - childStart, b - childStart)) tr.replaceWith(a, b, schema.text(piece, child.marks));
+    });
+    return false;
+  });
+  if (tr.docChanged) view.dispatch(tr);
+  view.focus();
+}
+
+/** The word at the cursor (letters, حركات and apostrophes), if there is one. */
+function wordRange(): { from: number; to: number; word: string } | null {
+  const { $head } = view.state.selection;
+  if (!$head.parent.isTextblock) return null;
+  const text = $head.parent.textBetween(0, $head.parent.content.size, undefined, "\ufffc");
+  const isWordChar = (c: string | undefined) => !!c && /[\p{L}\p{M}'’]/u.test(c);
+  let start = $head.parentOffset;
+  let end = start;
+  while (start > 0 && isWordChar(text[start - 1])) start--;
+  while (end < text.length && isWordChar(text[end])) end++;
+  if (start === end) return null;
+  return { from: $head.start() + start, to: $head.start() + end, word: text.slice(start, end) };
+}
+
+menuButton($("case-button"), $("case-menu"), (item) => applyCase(item.dataset.case!));
+
+// ---- Punctuate (English, offline): the auto-punctuation model, on demand ----
+$("punctuate").addEventListener("mousedown", (e) => e.preventDefault());
+$("punctuate").addEventListener("click", () => {
+  const english = targetBlocks().filter((b) => isEnglish(b.text));
+  if (!english.length) return showDocState("No English text here");
+  for (const b of english) punctuationJobs.push({ pos: b.pos, text: b.text });
+  runPunctuationJobs();
+  view.focus();
+});
+
+// ---- ✦ Synonyms (Claude): words that fit this sentence ----
+const synonymMenu = $("synonym-menu");
+menuItems(synonymMenu, (item) => {
+  const target = JSON.parse(item.dataset.target!) as { from: number; to: number; word: string };
+  if (view.state.doc.textBetween(target.from, target.to) === target.word) {
+    view.dispatch(view.state.tr.insertText(item.dataset.word!, target.from, target.to));
+  }
+  view.focus();
+});
+async function showSynonyms(button: HTMLElement) {
+  const target = wordRange();
+  if (!target) return showDocState("Put the cursor in a word first · ضع المؤشر داخل كلمة");
+  const sentence = view.state.selection.$head.parent.textContent;
+  const anchor = view.coordsAtPos(target.from);
+  const end = view.coordsAtPos(target.to);
+  const rect = new DOMRect(Math.min(anchor.left, end.left), anchor.top, Math.abs(end.left - anchor.left), anchor.bottom - anchor.top);
+  synonymMenu.dir = textDirection(target.word) === "rtl" ? "rtl" : "ltr";
+  const note = document.createElement("p");
+  note.className = "menu-empty";
+  note.textContent = "…";
+  synonymMenu.replaceChildren(note);
+  openMenu(synonymMenu, rect, button);
+  try {
+    const words = await invoke<string[]>("synonyms", { word: target.word, sentence });
+    if (synonymMenu.hidden) return;
+    if (!words.length) {
+      note.textContent = synonymMenu.dir === "rtl" ? "لا مرادفات" : "No synonyms";
+      return;
+    }
+    synonymMenu.replaceChildren(
+      ...words.map((w) => {
+        const b = document.createElement("button");
+        b.className = "synonym";
+        b.textContent = w;
+        b.dataset.word = w;
+        b.dataset.target = JSON.stringify(target);
+        b.setAttribute("role", "menuitem");
+        return b;
+      }),
+    );
+    synonymMenu.querySelector<HTMLButtonElement>("button")?.focus();
+  } catch (e) {
+    closeMenu(synonymMenu);
+    claudeError(e);
+  }
+}
+for (const id of ["synonyms-ar", "synonyms-en"]) {
+  $(id).addEventListener("mousedown", (e) => e.preventDefault());
+  $(id).addEventListener("click", () => showSynonyms($(id)));
+}
 
 // ---- Settings: the Claude API key ----
 async function refreshMemoryStatus() {
@@ -986,41 +1225,66 @@ async function saveDocument(saveAs = false): Promise<boolean> {
   }
 }
 
-// The File menu (the toolbar's document button).
-const fileButton = $<HTMLButtonElement>("file-button");
-const fileMenu = $("file-menu");
-function setFileMenu(open: boolean) {
-  fileMenu.hidden = !open;
-  fileButton.setAttribute("aria-expanded", String(open));
-  if (open) {
-    const r = fileButton.getBoundingClientRect();
-    fileMenu.style.top = `${r.bottom + 6}px`;
-    fileMenu.style.right = `${window.innerWidth - r.right}px`;
-    fileMenu.querySelector<HTMLButtonElement>("button")?.focus();
-  }
+// ---- Popup menus (File, ✦ Claude, case, synonyms) ----
+// Opens under an anchor (a button or a word), lined up with its end edge when it's on the right
+// half of the window; arrow keys move, Escape closes, a click outside closes.
+const openMenus = new Set<HTMLElement>();
+function openMenu(menu: HTMLElement, anchor: DOMRect, opener?: HTMLElement) {
+  for (const m of openMenus) if (m !== menu) closeMenu(m);
+  menu.hidden = false;
+  openMenus.add(menu);
+  opener?.setAttribute("aria-expanded", "true");
+  menu.dataset.opener = opener?.id ?? "";
+  const width = menu.offsetWidth;
+  const left = anchor.left + anchor.width / 2 > window.innerWidth / 2 ? anchor.right - width : anchor.left;
+  menu.style.left = `${Math.max(8, Math.min(left, window.innerWidth - width - 8))}px`;
+  menu.style.right = "auto";
+  menu.style.top = `${anchor.bottom + 6}px`;
+  menu.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
 }
-fileButton.addEventListener("click", () => setFileMenu(fileMenu.hidden));
-fileMenu.addEventListener("click", (e) => {
-  const action = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-file]")?.dataset.file;
-  if (!action) return;
-  setFileMenu(false);
+function closeMenu(menu: HTMLElement) {
+  menu.hidden = true;
+  openMenus.delete(menu);
+  if (menu.dataset.opener) document.getElementById(menu.dataset.opener)?.setAttribute("aria-expanded", "false");
+}
+function menuButton(button: HTMLElement, menu: HTMLElement, onPick: (item: HTMLButtonElement) => void) {
+  button.addEventListener("mousedown", (e) => e.preventDefault()); // keep the editor's selection
+  button.addEventListener("click", () => (menu.hidden ? openMenu(menu, button.getBoundingClientRect(), button) : closeMenu(menu)));
+  menuItems(menu, onPick);
+}
+function menuItems(menu: HTMLElement, onPick: (item: HTMLButtonElement) => void) {
+  menu.addEventListener("mousedown", (e) => e.preventDefault());
+  menu.addEventListener("click", (e) => {
+    const item = (e.target as HTMLElement).closest<HTMLButtonElement>("button");
+    if (!item || item.disabled) return;
+    closeMenu(menu);
+    onPick(item);
+  });
+  menu.addEventListener("keydown", (e) => {
+    const items = [...menu.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")];
+    const i = items.indexOf(document.activeElement as HTMLButtonElement);
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      items[(i + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length]?.focus();
+      e.preventDefault();
+    } else if (e.key === "Escape") {
+      closeMenu(menu);
+      view.focus();
+    }
+  });
+}
+document.addEventListener("mousedown", (e) => {
+  for (const menu of openMenus) {
+    const opener = menu.dataset.opener ? document.getElementById(menu.dataset.opener) : null;
+    if (!menu.contains(e.target as Node) && !opener?.contains(e.target as Node)) closeMenu(menu);
+  }
+});
+
+// The File menu (the toolbar's document button).
+menuButton($("file-button"), $("file-menu"), (item) => {
+  const action = item.dataset.file;
   if (action === "new") newDocument();
   else if (action === "open") openDocument();
-  else saveDocument(action === "save-as");
-});
-document.addEventListener("mousedown", (e) => {
-  if (!fileMenu.hidden && !fileMenu.contains(e.target as Node) && !fileButton.contains(e.target as Node)) setFileMenu(false);
-});
-fileMenu.addEventListener("keydown", (e) => {
-  const items = [...fileMenu.querySelectorAll<HTMLButtonElement>("button")];
-  const i = items.indexOf(document.activeElement as HTMLButtonElement);
-  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-    items[(i + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length].focus();
-    e.preventDefault();
-  } else if (e.key === "Escape") {
-    setFileMenu(false);
-    view.focus();
-  }
+  else if (action) saveDocument(action === "save-as");
 });
 
 // Closing the window: Qalam asks first if there are unsaved changes.
@@ -1049,6 +1313,13 @@ listen("close-requested", async () => {
     showDocState();
   }
 })();
+
+// The toolbar floats over the page and can wrap onto a second row in a narrow window; the page
+// starts below it, whatever its height.
+const toolbarEl = document.querySelector<HTMLElement>(".toolbar")!;
+new ResizeObserver(() => {
+  document.documentElement.style.setProperty("--toolbar-h", `${toolbarEl.offsetHeight}px`);
+}).observe(toolbarEl);
 
 // ---- Light / dark ----
 // Follows the system until the writer picks one with the ☾ / ☀ button; the choice is remembered.
