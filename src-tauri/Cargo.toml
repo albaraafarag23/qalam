@@ -36,8 +36,3 @@ spellbook = "0.3"
 harper-core = { version = "2.13", default-features = false, features = ["concurrent"] }
 tauri-plugin-dialog = "2"
 base64 = "0.22"
-
-# Windows only: reach the WebView2 settings that Tauri doesn't expose (see lib.rs).
-[target.'cfg(windows)'.dependencies]
-webview2-com = "0.39"
-windows-core = "0.62"

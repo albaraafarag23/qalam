@@ -31,13 +31,6 @@ pub fn run() {
                     let _ = window.set_icon(tauri::image::Image::new(pixels, 256, 256));
                 }
             }
-            #[cfg(windows)]
-            {
-                use tauri::Manager;
-                if let Some(window) = app.get_webview_window("main") {
-                    window.with_webview(windows_title_bar_fix)?;
-                }
-            }
             Ok(())
         })
         // Closing goes through the editor first, so unsaved changes can be saved (see
@@ -87,24 +80,4 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
-}
-
-/// wry turns on WebView2's non-client region support, which lets a page act as part of the
-/// title bar. Qalam keeps the normal Windows title bar, and with the support on, Windows 11
-/// treated the toolbar's right end as the Close/Maximize buttons (Close tooltip over ⚙,
-/// Snap Layouts over ☾). Turning it off leaves the whole page an ordinary client area.
-#[cfg(windows)]
-fn windows_title_bar_fix(webview: tauri::webview::PlatformWebview) {
-    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings9;
-    use windows_core::Interface;
-    unsafe {
-        let Ok(core) = webview.controller().CoreWebView2() else { return };
-        let Ok(settings) = core.Settings() else { return };
-        if let Ok(settings9) = settings.cast::<ICoreWebView2Settings9>() {
-            // The change applies from the next navigation, so reload the page once.
-            if settings9.SetIsNonClientRegionSupportEnabled(false).is_ok() {
-                let _ = core.Reload();
-            }
-        }
-    }
 }
