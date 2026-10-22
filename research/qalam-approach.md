@@ -58,11 +58,13 @@ behind, and says what Qalam does instead. ✅ = built (on the `spellcheck` branc
 - ✗ **Style nagging and "readability scores."** They're opinions, and they'd crowd out real mistakes.
 - ✗ **Rules that are sometimes wrong** ("explain them", "order for"). One wrong flag costs more trust than a right one earns.
 - ✗ **An animation on every underline.** Underlines are redrawn whenever a paragraph is re-checked, so it would flicker.
-- ✗ **LanguageTool's Java server.** Too heavy and too slow for a small desktop app. Its rules remain a reference.
+- ✗ **LanguageTool's Java server.** Tested for Arabic: too many false alarms, and ~600 MB of memory. Its precise rules are a reference for our own.
 
 ## Next (⏳)
-- ⏳ **Arabic grammar.** Nothing open is good enough yet. Start from LanguageTool's Arabic lists (licence decision needed) and
-  Qalam's own rules, with Claude as an opt-in helper.
+- ⏳ **Arabic grammar.** LanguageTool was tested and isn't good enough to ship ([languagetool-arabic.md](languagetool-arabic.md)):
+  about 10 of 25 mistakes caught, and a flag every 16 words on clean Arabic. Instead: Qalam's own rules, each one gated on
+  zero false alarms over 31,828 words of clean Arabic (لم يذهبون, سوف لن, repeated words, punctuation spacing first),
+  plus Claude as an opt-in deep check.
 - ⏳ **Rules for Arabic speakers writing English**, growing `en-learner.txt` (LanguageTool has the same idea for German speakers).
 - ⏳ **Dialect words** (عامية) shown as a gentle, optional suggestion, never as a mistake.
 - ⏳ **Learning from corrections:** words the writer keeps accepting become part of their dictionary automatically, as تشكيل memory already does.
