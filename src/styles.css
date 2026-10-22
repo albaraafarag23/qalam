@@ -7,6 +7,7 @@
   --ink-soft: #77736b;
   --rule: #e4e0d8;
   --accent: #1f6f5c;
+  --misspelt: #c4513f; /* warm red, for spellcheck underlines */
   --hover: rgba(43, 41, 37, 0.06);
   --shadow: 0 1px 2px rgba(60, 50, 30, 0.05), 0 10px 32px rgba(60, 50, 30, 0.07);
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -35,6 +36,7 @@
   --ink-soft: #a29d93;
   --rule: #3a3732;
   --accent: #5cc4a6;
+  --misspelt: #ec8a74;
   --hover: rgba(233, 229, 221, 0.08);
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 32px rgba(0, 0, 0, 0.3);
   --glass: rgba(255, 255, 255, 0.07);
@@ -52,6 +54,7 @@
     --ink-soft: #a29d93;
     --rule: #3a3732;
     --accent: #5cc4a6;
+    --misspelt: #ec8a74;
     --hover: rgba(233, 229, 221, 0.08);
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 32px rgba(0, 0, 0, 0.3);
     --glass: rgba(255, 255, 255, 0.07);
@@ -301,6 +304,58 @@ button.primary, button.primary:hover { background: var(--accent); color: var(--p
 @media (prefers-reduced-motion: reduce) {
   .arabic-tools > *, .arabic-tools .haraka, .arabic-tools .tashkeel, .arabic-tools #tashkeel-mode, .arabic-tools.leaving { animation: none; }
 }
+
+/* ---- Spellcheck ---- */
+/* A wavy line under the whole word, set low enough to clear Arabic descenders (ي ر و ن).
+   No padding or border on the span, which would split the word's letter joining. */
+.ProseMirror .misspelt {
+  /* Longhands: WebKitGTK drops the whole `text-decoration` shorthand when it holds a var(). */
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-color: var(--misspelt);
+  text-decoration-thickness: 1.5px;
+  text-decoration-skip-ink: none;
+  text-underline-offset: 0.32em;
+  cursor: pointer;
+}
+.spell-card {
+  position: fixed;
+  z-index: 20;
+  min-width: 180px;
+  max-width: 320px;
+  padding: 6px;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: var(--paper);
+  box-shadow: var(--shadow);
+  font-size: 14px;
+  animation: spell-in 160ms var(--ease);
+}
+@keyframes spell-in { from { opacity: 0; transform: translateY(-4px); } }
+.spell-card[hidden] { display: none; }
+.spell-suggestions { display: flex; flex-direction: column; }
+.spell-card button {
+  display: block;
+  width: 100%;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  line-height: 1.6;
+  text-align: start;
+  cursor: pointer;
+}
+.spell-suggestions button { font-family: var(--doc-font); font-size: 17px; font-weight: 500; }
+.spell-card button:hover:not(:disabled) { background: var(--hover); }
+.spell-card button:disabled { color: var(--ink-soft); cursor: default; }
+/* The note is set in the document font: the UI font has no tanween, and a fallback font
+   for one word would put it on a different baseline. */
+.spell-note { margin: 4px 10px 6px; color: var(--ink-soft); font-family: var(--doc-font); font-size: 15px; line-height: 1.8; }
+.spell-actions { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--rule); }
+.spell-actions button { color: var(--ink-soft); font-size: 13px; }
+@media (prefers-reduced-motion: reduce) { .spell-card { animation: none; } }
 
 /* ---- Cursor ---- */
 .soft-caret {

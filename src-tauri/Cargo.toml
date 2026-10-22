@@ -29,6 +29,8 @@ keyring = { version = "3", features = ["sync-secret-service", "crypto-rust", "wi
 ort = { version = "=2.0.0-rc.15", default-features = false, features = ["load-dynamic", "api-31"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 sha2 = "0.10"
+# Spellcheck: a pure-Rust Hunspell (see src/spell.rs).
+spellbook = "0.3"
 
 # Windows only: reach the WebView2 settings that Tauri doesn't expose (see lib.rs).
 [target.'cfg(windows)'.dependencies]

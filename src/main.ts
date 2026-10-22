@@ -21,6 +21,7 @@ import { HARAKAT, activeHarakat, clearHarakat, setHaraka } from "./editor/haraka
 import { applyResults, previewHtml, targets, type Target } from "./editor/tashkeel";
 import { applyMemory, emptyMemory, learn, recordApplied, type TashkeelMemory } from "./editor/memory";
 import { edits as punctuationEdits, isEnglish, modelInput, words as splitWords } from "./editor/punctuation";
+import { ignoreWord, misspeltAt, setSpellcheck, spellcheck, spellcheckEnabled, type Misspelling } from "./editor/spellcheck";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
@@ -85,6 +86,7 @@ const state = EditorState.create({
     rules,
     blockDirection,
     softCaret,
+    spellcheck({ check: (paragraphs) => invoke<Misspelling[][]>("spell_check", { paragraphs }) }),
     history(),
     keymap({
       "Mod-z": undo,
@@ -124,6 +126,7 @@ const view = new EditorView(document.getElementById("page")!, {
     if (tr.selectionSet && !tr.docChanged) lastTypedDirection = null; // moved: go by the paragraph again
     for (const job of punctuationJobs) job.pos = tr.mapping.map(job.pos);
     view.updateState(view.state.apply(tr));
+    if (tr.docChanged) closeSpellCard();
     updateStatus();
   },
 });
@@ -502,6 +505,127 @@ function setAutoPunctuation(on: boolean) {
 setAutoPunctuation(autoPunctuation);
 autoPunctButton.addEventListener("click", () => {
   setAutoPunctuation(!autoPunctuation);
+  view.focus();
+});
+
+// ---- Spellcheck: suggestions for an underlined word ----
+// Clicking (or right-clicking) an underlined word opens a small card under it: up to six
+// suggestions, "Add to dictionary" and "Ignore". Its labels follow the word's language.
+const spellCard = $("spell-card");
+const spellSuggestions = $("spell-suggestions");
+const spellNote = $("spell-note");
+let spellTarget: { from: number; to: number; word: string } | null = null;
+
+interface SpellSuggestions {
+  words: string[];
+  note: string | null;
+}
+
+function closeSpellCard() {
+  spellCard.hidden = true;
+  spellTarget = null;
+}
+
+function suggestionButton(label: string, onClick?: () => void) {
+  const btn = document.createElement("button");
+  btn.textContent = label;
+  btn.setAttribute("role", "menuitem");
+  if (onClick) btn.addEventListener("click", onClick);
+  else btn.disabled = true;
+  return btn;
+}
+
+async function openSpellCard(target: { from: number; to: number; word: string }, anchor: DOMRect) {
+  spellTarget = target;
+  const arabic = textDirection(target.word) === "rtl";
+  spellCard.dir = arabic ? "rtl" : "ltr";
+  $("spell-add").textContent = arabic ? "أضف إلى القاموس" : "Add to dictionary";
+  $("spell-ignore").textContent = arabic ? "تجاهل" : "Ignore";
+  spellNote.hidden = true;
+  spellSuggestions.replaceChildren(suggestionButton("…"));
+  spellCard.hidden = false;
+
+  // Under the word, lined up with its start (its right edge for Arabic), kept on screen.
+  const card = spellCard.getBoundingClientRect();
+  const left = arabic ? anchor.right - card.width : anchor.left;
+  spellCard.style.left = `${Math.max(8, Math.min(left, window.innerWidth - card.width - 8))}px`;
+  const below = anchor.bottom + 6;
+  spellCard.style.top = `${below + card.height > window.innerHeight - 8 ? anchor.top - card.height - 6 : below}px`;
+
+  const result = await invoke<SpellSuggestions>("spell_suggest", { word: target.word }).catch(() => ({ words: [], note: null }));
+  if (spellTarget !== target) return; // closed or moved on meanwhile
+  spellSuggestions.replaceChildren(
+    ...(result.words.length
+      ? result.words.map((w) => suggestionButton(w, () => replaceMisspelt(target, w)))
+      : [suggestionButton(arabic ? "لا اقتراحات" : "No suggestions")]),
+  );
+  spellNote.textContent = result.note ?? "";
+  spellNote.hidden = !result.note;
+}
+
+function replaceMisspelt(target: { from: number; to: number; word: string }, replacement: string) {
+  closeSpellCard();
+  const current = view.state.doc.textBetween(target.from, target.to);
+  if (current === target.word) view.dispatch(view.state.tr.insertText(replacement, target.from, target.to));
+  view.focus();
+}
+
+function openSpellCardAt(event: MouseEvent): boolean {
+  const el = (event.target as HTMLElement).closest?.(".misspelt");
+  const at = view.posAtCoords({ left: event.clientX, top: event.clientY });
+  const target = el && at ? misspeltAt(view.state, at.pos) : null;
+  if (!el || !target) return false;
+  openSpellCard(target, el.getBoundingClientRect());
+  return true;
+}
+
+view.dom.addEventListener("click", (e) => {
+  if (!openSpellCardAt(e)) closeSpellCard();
+});
+view.dom.addEventListener("contextmenu", (e) => {
+  if (openSpellCardAt(e)) e.preventDefault();
+});
+$("spell-add").addEventListener("click", async () => {
+  const target = spellTarget;
+  closeSpellCard();
+  if (!target) return;
+  try {
+    await invoke("spell_add_word", { word: target.word });
+    view.dispatch(ignoreWord(view.state.tr, target.word));
+  } catch (e) {
+    console.warn(e);
+  }
+  view.focus();
+});
+$("spell-ignore").addEventListener("click", () => {
+  const target = spellTarget;
+  closeSpellCard();
+  if (target) view.dispatch(ignoreWord(view.state.tr, target.word));
+  view.focus();
+});
+spellCard.addEventListener("mousedown", (e) => e.preventDefault()); // keep the editor's selection
+document.addEventListener("mousedown", (e) => {
+  if (!spellCard.hidden && !spellCard.contains(e.target as Node) && !(e.target as HTMLElement).closest?.(".misspelt")) closeSpellCard();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !spellCard.hidden) {
+    closeSpellCard();
+    view.focus();
+  }
+});
+document.querySelector(".desk")!.addEventListener("scroll", closeSpellCard);
+
+const spellcheckButton = $<HTMLButtonElement>("spellcheck-toggle");
+function showSpellcheckButton() {
+  spellcheckButton.textContent = `Spellcheck: ${spellcheckEnabled(view.state) ? "on" : "off"}`;
+}
+showSpellcheckButton();
+spellcheckButton.addEventListener("click", () => {
+  const on = !spellcheckEnabled(view.state);
+  try { localStorage.setItem("qalam.spellcheck", on ? "on" : "off"); } catch {}
+  view.dispatch(setSpellcheck(view.state.tr, on));
+  closeSpellCard();
+  showSpellcheckButton();
   view.focus();
 });
 

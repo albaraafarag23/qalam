@@ -3,6 +3,7 @@ mod memory;
 mod offline;
 mod punctuate;
 mod runtime;
+mod spell;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -10,7 +11,9 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(offline::OfflineModel::default())
         .manage(punctuate::PunctuationModel::default())
+        .manage(spell::Spellchecker::default())
         .setup(|app| {
+            spell::preload(app.handle());
             #[cfg(windows)]
             {
                 use tauri::Manager;
@@ -18,8 +21,6 @@ pub fn run() {
                     window.with_webview(windows_title_bar_fix)?;
                 }
             }
-            #[cfg(not(windows))]
-            let _ = app;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -35,6 +36,9 @@ pub fn run() {
             punctuate::punctuation_model_installed,
             punctuate::install_punctuation_model,
             punctuate::punctuate_offline,
+            spell::spell_check,
+            spell::spell_suggest,
+            spell::spell_add_word,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

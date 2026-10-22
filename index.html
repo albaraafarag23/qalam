@@ -58,6 +58,16 @@
       </div>
     </section>
 
+    <!-- Suggestions for a misspelt word; labels follow the word's language. -->
+    <div id="spell-card" class="spell-card" role="menu" hidden>
+      <div id="spell-suggestions" class="spell-suggestions"></div>
+      <p id="spell-note" class="spell-note" hidden></p>
+      <div class="spell-actions">
+        <button id="spell-add" role="menuitem"></button>
+        <button id="spell-ignore" role="menuitem"></button>
+      </div>
+    </div>
+
     <dialog id="settings" class="settings">
       <h2>Settings · الإعدادات</h2>
       <label for="api-key">Claude API key</label>
@@ -83,6 +93,7 @@
     <footer class="status">
       <span class="status-left">
         <span id="words">0 words</span>
+        <button id="spellcheck-toggle" class="status-toggle" title="Underlines misspelt Arabic and English words; click one for suggestions">Spellcheck: on</button>
         <button id="auto-punct" class="status-toggle" title="Adds missing capitals and punctuation to an English paragraph when you press Enter at its end">Auto-punctuation: on</button>
       </span>
       <span id="dir"></span>

@@ -1,5 +1,10 @@
 # Spellcheck for Qalam: open-source options, measured
 
+> **Status:** built on the `spellcheck` branch (`src-tauri/src/spell.rs`, `src/editor/spellcheck.ts`).
+> On top of the plan below, Arabic suggestions are re-ranked by a weighted edit distance: swapping commonly
+> confused letters and adding or dropping an alif cost half an edit. Qalam also generates its own candidates
+> (drop an extra alif, collapse doubled letters, swap confusable letters), because Hunspell misses fixes like لاكن → لكن.
+
 **Studied:** 2026-10-22. Companion notes: [obsidian.md](obsidian.md) (Chromium's built-in checker) and
 [grammarly.md](grammarly.md) (how live underlines are drawn).
 
