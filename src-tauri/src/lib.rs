@@ -1,5 +1,6 @@
 mod arabic_rules;
 mod claude;
+mod documents;
 mod grammar;
 mod memory;
 mod offline;
@@ -11,6 +12,7 @@ mod spell;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(offline::OfflineModel::default())
         .manage(punctuate::PunctuationModel::default())
         .manage(spell::Spellchecker::default())
@@ -25,7 +27,25 @@ pub fn run() {
             }
             Ok(())
         })
+        // Closing goes through the editor first, so unsaved changes can be saved (see
+        // documents::close_window, which closes for real).
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                use tauri::Emitter;
+                api.prevent_close();
+                let _ = window.emit("close-requested", ());
+            }
+        })
         .invoke_handler(tauri::generate_handler![
+            documents::open_document,
+            documents::read_document,
+            documents::choose_save_path,
+            documents::write_document,
+            documents::startup_document,
+            documents::save_backup,
+            documents::load_backup,
+            documents::clear_backup,
+            documents::close_window,
             claude::set_api_key,
             claude::has_api_key,
             claude::clear_api_key,

@@ -37,10 +37,21 @@
         </div>
       </div>
       <div class="toolbar-end">
+        <button id="file-button" class="icon-button" title="File: new, open, save · ملف" aria-haspopup="menu" aria-expanded="false">
+          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M4 1.5h5.5L13 5v9.5H4z M9.5 1.5V5H13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+        </button>
         <button id="theme-toggle" class="icon-button" title="Dark mode">☾</button>
         <button id="open-settings" class="icon-button" title="Settings">⚙</button>
       </div>
     </header>
+
+    <div id="file-menu" class="file-menu" role="menu" hidden>
+      <button data-file="new" role="menuitem"><span>New · جديد</span><kbd>Ctrl+N</kbd></button>
+      <button data-file="open" role="menuitem"><span>Open… · فتح</span><kbd>Ctrl+O</kbd></button>
+      <hr />
+      <button data-file="save" role="menuitem"><span>Save · حفظ</span><kbd>Ctrl+S</kbd></button>
+      <button data-file="save-as" role="menuitem"><span>Save as… · حفظ باسم</span><kbd>Ctrl+Shift+S</kbd></button>
+    </div>
 
     <main class="desk">
       <article id="page" class="page"></article>
@@ -97,8 +108,21 @@
       </div>
     </dialog>
 
+    <!-- Asked before unsaved changes would be lost: closing, New, Open. -->
+    <dialog id="unsaved" class="settings">
+      <h2 id="unsaved-title">Save your changes?</h2>
+      <p class="hint">If you don't save, the changes since the last save will be lost.</p>
+      <div class="settings-actions">
+        <button id="unsaved-discard">Don't save · لا تحفظ</button>
+        <span class="grow"></span>
+        <button id="unsaved-cancel">Cancel · إلغاء</button>
+        <button id="unsaved-save" class="primary" autofocus>Save · حفظ</button>
+      </div>
+    </dialog>
+
     <footer class="status">
       <span class="status-left">
+        <span id="doc-status" class="doc-status"></span>
         <span id="words">0 words</span>
         <button id="spellcheck-toggle" class="status-toggle" title="Underlines misspelt Arabic and English words; click one for suggestions">Spellcheck: on</button>
         <button id="auto-punct" class="status-toggle" title="Adds missing capitals and punctuation to an English paragraph when you press Enter at its end">Auto-punctuation: on</button>

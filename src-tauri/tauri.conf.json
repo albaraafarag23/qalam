@@ -36,6 +36,17 @@
     ],
     "resources": {
       "dictionaries/*": "dictionaries/"
-    }
+    },
+    "fileAssociations": [
+      {
+        "ext": [
+          "qalam"
+        ],
+        "name": "Qalam document",
+        "description": "A document written in Qalam",
+        "role": "Editor",
+        "mimeType": "application/x-qalam"
+      }
+    ]
   }
 }

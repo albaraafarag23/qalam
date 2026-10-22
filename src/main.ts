@@ -8,6 +8,7 @@ import "prosemirror-view/style/prosemirror.css";
 import "./styles.css";
 
 import { EditorState, Selection, type Command } from "prosemirror-state";
+import type { Node as PMNode } from "prosemirror-model";
 import { EditorView } from "prosemirror-view";
 import { baseKeymap, setBlockType, toggleMark } from "prosemirror-commands";
 import { history, undo, redo, closeHistory } from "prosemirror-history";
@@ -22,7 +23,9 @@ import { applyResults, previewHtml, targets, type Target } from "./editor/tashke
 import { applyMemory, emptyMemory, learn, recordApplied, type TashkeelMemory } from "./editor/memory";
 import { edits as punctuationEdits, isEnglish, modelInput, words as splitWords } from "./editor/punctuation";
 import { ignoreUnderline, setSpellcheck, spellcheck, spellcheckEnabled, underlineAt, type Issue, type Underline } from "./editor/spellcheck";
+import { displayName, fromQalam, fromText, toQalam, toText, type FileKind } from "./editor/files";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 
 const { nodes, marks } = schema;
@@ -104,6 +107,11 @@ const state = EditorState.create({
       // Alt+1…8 put a حركة on the letter before the cursor, Alt+0 clears them.
       ...Object.fromEntries(HARAKAT.map((h) => [`Alt-${h.key}`, setHaraka(h.mark)])),
       "Alt-0": clearHarakat,
+      // Files, as in every editor.
+      "Mod-n": () => (newDocument(), true),
+      "Mod-o": () => (openDocument(), true),
+      "Mod-s": () => (saveDocument(), true),
+      "Mod-Shift-s": () => (saveDocument(true), true),
       // Opens the spelling/grammar card for the underline at the cursor, from the keyboard.
       "Mod-.": () => openSpellCardAtCursor(),
       "Mod-Shift-t": () => {
@@ -132,7 +140,10 @@ const view = new EditorView(document.getElementById("page")!, {
     if (tr.selectionSet && !tr.docChanged) lastTypedDirection = null; // moved: go by the paragraph again
     for (const job of punctuationJobs) job.pos = tr.mapping.map(job.pos);
     view.updateState(view.state.apply(tr));
-    if (tr.docChanged) closeSpellCard();
+    if (tr.docChanged) {
+      closeSpellCard();
+      documentChanged();
+    }
     updateStatus();
   },
 });
@@ -717,6 +728,200 @@ $("key-remove").addEventListener("click", async () => {
   refreshKeyStatus("Key removed.");
 });
 settings.addEventListener("close", () => view.focus());
+
+// ---- Documents: new, open, save, and keeping unsaved work safe ----
+// The document's file, if it has one. A document is unsaved when it differs from what was last
+// saved or opened; restored work counts as unsaved until it's saved.
+let docPath: string | null = null;
+let docName: string | null = null; // file name, with extension
+let docKind: FileKind = "qalam";
+let savedDoc = view.state.doc;
+let restoredUnsaved = false;
+const isDirty = () => restoredUnsaved || !view.state.doc.eq(savedDoc);
+
+interface OpenedDocument { path: string; name: string; kind: FileKind; contents: string }
+interface SavePath { path: string; name: string; kind: FileKind }
+interface Backup { qalam: number; doc: unknown; path: string | null; name: string | null; kind: FileKind }
+
+const docStatus = $("doc-status");
+let shownDirty: boolean | null = null;
+/** The window title and the status bar: "• رسالة — Qalam", "Unsaved changes". */
+function showDocState(note?: string) {
+  const dirty = isDirty();
+  docStatus.textContent = note ?? (dirty ? (docPath ? "Unsaved changes" : "Not saved yet") : docPath ? "Saved" : "");
+  docStatus.classList.toggle("is-dirty", dirty && !note);
+  if (dirty !== shownDirty || note) {
+    shownDirty = dirty;
+    try {
+      getCurrentWindow().setTitle(`${dirty ? "• " : ""}${displayName(docName)} — Qalam`).catch(() => {});
+    } catch {} // outside Tauri (tests in a browser) there's no window to name
+  }
+}
+
+// Unsaved work is copied to the app's data folder a couple of seconds after each change, so a
+// crash or a forced close never loses it; the next start restores it.
+let backupTimer: number | undefined;
+function documentChanged() {
+  showDocState();
+  clearTimeout(backupTimer);
+  backupTimer = window.setTimeout(() => {
+    if (isDirty()) {
+      const backup: Backup = { qalam: 1, doc: view.state.doc.toJSON(), path: docPath, name: docName, kind: docKind };
+      invoke("save_backup", { json: JSON.stringify(backup) }).catch(() => {});
+    } else {
+      invoke("clear_backup").catch(() => {});
+    }
+  }, 2000);
+}
+
+/** Shows a document in the editor (with a fresh undo history). */
+function loadDocument(doc: PMNode, file: { path: string | null; name: string | null; kind: FileKind }, unsaved = false) {
+  view.updateState(EditorState.create({ doc, plugins: view.state.plugins }));
+  ({ path: docPath, name: docName, kind: docKind } = file);
+  savedDoc = doc;
+  restoredUnsaved = unsaved;
+  shownDirty = null; // a new name for the window title
+  lastTypedDirection = null;
+  punctuationJobs.length = 0;
+  closeSpellCard();
+  updateStatus();
+  showDocState();
+  view.focus();
+}
+
+function parseDocument(opened: OpenedDocument): PMNode {
+  return opened.kind === "qalam" ? fromQalam(schema, opened.contents) : fromText(schema, opened.contents);
+}
+
+// "Save your changes?": resolves to whether it's fine to go on (saved, or the writer chose not to).
+const unsavedDialog = $<HTMLDialogElement>("unsaved");
+function confirmDiscard(): Promise<boolean> {
+  if (!isDirty()) return Promise.resolve(true);
+  $("unsaved-title").textContent = docName ? `Save changes to “${displayName(docName)}”?` : "Save this document?";
+  unsavedDialog.showModal();
+  return new Promise((resolve) => {
+    const done = (answer: "save" | "discard" | "cancel") => {
+      unsavedDialog.close();
+      unsavedDialog.removeEventListener("cancel", onCancel);
+      for (const [id, handler] of handlers) $(id).removeEventListener("click", handler);
+      if (answer === "save") saveDocument().then(resolve);
+      else resolve(answer === "discard");
+    };
+    const onCancel = (e: Event) => (e.preventDefault(), done("cancel"));
+    const handlers: [string, () => void][] = [
+      ["unsaved-save", () => done("save")],
+      ["unsaved-discard", () => done("discard")],
+      ["unsaved-cancel", () => done("cancel")],
+    ];
+    for (const [id, handler] of handlers) $(id).addEventListener("click", handler);
+    unsavedDialog.addEventListener("cancel", onCancel);
+  });
+}
+
+async function newDocument() {
+  if (!(await confirmDiscard())) return;
+  loadDocument(schema.topNodeType.createAndFill()!, { path: null, name: null, kind: "qalam" });
+  invoke("clear_backup").catch(() => {});
+}
+
+async function openDocument() {
+  if (!(await confirmDiscard())) return;
+  try {
+    const opened = await invoke<OpenedDocument | null>("open_document", { current: docPath });
+    if (!opened) return;
+    loadDocument(parseDocument(opened), opened);
+    invoke("clear_backup").catch(() => {});
+  } catch (e) {
+    showDocState(String(e).replace(/^Error: /, ""));
+  }
+}
+
+/** Saves to the document's file, or asks where (always, for "Save as"). True once saved. */
+async function saveDocument(saveAs = false): Promise<boolean> {
+  try {
+    if (!docPath || saveAs) {
+      const choice = await invoke<SavePath | null>("choose_save_path", { suggestedName: `${displayName(docName)}.qalam`, current: docPath });
+      if (!choice) return false;
+      ({ path: docPath, name: docName, kind: docKind } = choice);
+    }
+    const doc = view.state.doc;
+    await invoke("write_document", { path: docPath, contents: docKind === "qalam" ? toQalam(doc) : toText(doc) });
+    savedDoc = doc;
+    restoredUnsaved = false;
+    shownDirty = null;
+    invoke("clear_backup").catch(() => {});
+    showDocState(docKind === "text" ? "Saved as plain text (headings, lists and bold aren't kept in .txt)" : "Saved");
+    return true;
+  } catch (e) {
+    showDocState(String(e).replace(/^Error: /, ""));
+    return false;
+  }
+}
+
+// The File menu (the toolbar's document button).
+const fileButton = $<HTMLButtonElement>("file-button");
+const fileMenu = $("file-menu");
+function setFileMenu(open: boolean) {
+  fileMenu.hidden = !open;
+  fileButton.setAttribute("aria-expanded", String(open));
+  if (open) {
+    const r = fileButton.getBoundingClientRect();
+    fileMenu.style.top = `${r.bottom + 6}px`;
+    fileMenu.style.right = `${window.innerWidth - r.right}px`;
+    fileMenu.querySelector<HTMLButtonElement>("button")?.focus();
+  }
+}
+fileButton.addEventListener("click", () => setFileMenu(fileMenu.hidden));
+fileMenu.addEventListener("click", (e) => {
+  const action = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-file]")?.dataset.file;
+  if (!action) return;
+  setFileMenu(false);
+  if (action === "new") newDocument();
+  else if (action === "open") openDocument();
+  else saveDocument(action === "save-as");
+});
+document.addEventListener("mousedown", (e) => {
+  if (!fileMenu.hidden && !fileMenu.contains(e.target as Node) && !fileButton.contains(e.target as Node)) setFileMenu(false);
+});
+fileMenu.addEventListener("keydown", (e) => {
+  const items = [...fileMenu.querySelectorAll<HTMLButtonElement>("button")];
+  const i = items.indexOf(document.activeElement as HTMLButtonElement);
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    items[(i + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length].focus();
+    e.preventDefault();
+  } else if (e.key === "Escape") {
+    setFileMenu(false);
+    view.focus();
+  }
+});
+
+// Closing the window: Qalam asks first if there are unsaved changes.
+listen("close-requested", async () => {
+  if (!(await confirmDiscard())) return;
+  await invoke("clear_backup").catch(() => {});
+  invoke("close_window");
+});
+
+// On start: a file Qalam was opened with (double-clicking a .qalam file), or else the unsaved
+// work from last time.
+(async () => {
+  try {
+    const path = await invoke<string | null>("startup_document");
+    if (path) {
+      const opened = await invoke<OpenedDocument>("read_document", { path });
+      loadDocument(parseDocument(opened), opened);
+      return;
+    }
+    const json = await invoke<string | null>("load_backup");
+    if (!json) return showDocState();
+    const backup = JSON.parse(json) as Backup;
+    loadDocument(schema.nodeFromJSON(backup.doc), backup, true);
+    showDocState("Restored the work you hadn't saved");
+  } catch (e) {
+    console.warn("documents:", e);
+    showDocState();
+  }
+})();
 
 // ---- Light / dark ----
 // Follows the system until the writer picks one with the ☾ / ☀ button; the choice is remembered.

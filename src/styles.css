@@ -319,6 +319,42 @@ button.primary, button.primary:hover { background: var(--accent); color: var(--p
   .arabic-tools > *, .arabic-tools .haraka, .arabic-tools .tashkeel, .arabic-tools #tashkeel-mode, .arabic-tools.leaving { animation: none; }
 }
 
+/* ---- File menu and save status ---- */
+.file-menu {
+  position: fixed;
+  z-index: 20;
+  min-width: 230px;
+  padding: 6px;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: var(--paper);
+  box-shadow: var(--shadow);
+  animation: spell-in 140ms var(--ease);
+}
+.file-menu[hidden] { display: none; }
+.file-menu button {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  text-align: start;
+  cursor: pointer;
+}
+.file-menu button:hover, .file-menu button:focus-visible { background: var(--hover); outline: none; }
+.file-menu kbd { color: var(--ink-soft); font: inherit; font-size: 12px; }
+.file-menu hr { border: 0; border-top: 1px solid var(--rule); margin: 4px 6px; }
+.icon-button svg { display: block; margin: auto; }
+.doc-status:empty { display: none; }
+.doc-status.is-dirty::before { content: "• "; color: var(--accent); }
+@media (prefers-reduced-motion: reduce) { .file-menu { animation: none; } }
+
 /* ---- Spellcheck ---- */
 /* A wavy line under the whole word, set low enough to clear Arabic descenders (ي ر و ن).
    No padding or border on the span, which would split the word's letter joining. */
