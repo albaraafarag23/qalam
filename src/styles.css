@@ -8,6 +8,7 @@
   --rule: #e4e0d8;
   --accent: #1f6f5c;
   --misspelt: #c4513f; /* warm red, for spellcheck underlines */
+  --grammar: #3c6fb0; /* blue, for grammar underlines (as in Word) */
   --hover: rgba(43, 41, 37, 0.06);
   --shadow: 0 1px 2px rgba(60, 50, 30, 0.05), 0 10px 32px rgba(60, 50, 30, 0.07);
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -37,6 +38,7 @@
   --rule: #3a3732;
   --accent: #5cc4a6;
   --misspelt: #ec8a74;
+  --grammar: #7fa8e3;
   --hover: rgba(233, 229, 221, 0.08);
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 32px rgba(0, 0, 0, 0.3);
   --glass: rgba(255, 255, 255, 0.07);
@@ -55,6 +57,7 @@
     --rule: #3a3732;
     --accent: #5cc4a6;
     --misspelt: #ec8a74;
+  --grammar: #7fa8e3;
     --hover: rgba(233, 229, 221, 0.08);
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 32px rgba(0, 0, 0, 0.3);
     --glass: rgba(255, 255, 255, 0.07);
@@ -275,6 +278,17 @@ button.primary, button.primary:hover { background: var(--accent); color: var(--p
   color: var(--ink);
   font-family: ui-monospace, monospace;
 }
+.settings-select {
+  width: 100%;
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--desk);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+}
 .settings-actions { margin-top: 8px; }
 .grow { flex: 1; }
 
@@ -318,6 +332,17 @@ button.primary, button.primary:hover { background: var(--accent); color: var(--p
   text-underline-offset: 0.32em;
   cursor: pointer;
 }
+/* Grammar: a calmer blue line, double rather than wavy, so the two kinds are told apart by
+   shape as well as colour. */
+.ProseMirror .grammar-issue {
+  text-decoration-line: underline;
+  text-decoration-style: double;
+  text-decoration-color: var(--grammar);
+  text-decoration-thickness: 1px;
+  text-decoration-skip-ink: none;
+  text-underline-offset: 0.3em;
+  cursor: pointer;
+}
 .spell-card {
   position: fixed;
   z-index: 20;
@@ -347,11 +372,13 @@ button.primary, button.primary:hover { background: var(--accent); color: var(--p
   text-align: start;
   cursor: pointer;
 }
+.spell-card button[hidden] { display: none; }
 .spell-suggestions button { font-family: var(--doc-font); font-size: 17px; font-weight: 500; }
 .spell-card button:hover:not(:disabled) { background: var(--hover); }
 .spell-card button:disabled { color: var(--ink-soft); cursor: default; }
 /* The note is set in the document font: the UI font has no tanween, and a fallback font
    for one word would put it on a different baseline. */
+.spell-card.is-grammar .spell-suggestions button { font-weight: 500; }
 .spell-note { margin: 4px 10px 6px; color: var(--ink-soft); font-family: var(--doc-font); font-size: 15px; line-height: 1.8; }
 .spell-actions { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--rule); }
 .spell-actions button { color: var(--ink-soft); font-size: 13px; }

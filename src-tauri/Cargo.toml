@@ -31,6 +31,9 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 sha2 = "0.10"
 # Spellcheck: a pure-Rust Hunspell (see src/spell.rs).
 spellbook = "0.3"
+# English grammar, offline (see src/grammar.rs). The thesaurus feature is left out: it adds
+# ~5 MB and Qalam doesn't use it.
+harper-core = { version = "2.13", default-features = false, features = ["concurrent"] }
 
 # Windows only: reach the WebView2 settings that Tauri doesn't expose (see lib.rs).
 [target.'cfg(windows)'.dependencies]

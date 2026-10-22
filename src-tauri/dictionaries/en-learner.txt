@@ -1,0 +1,16 @@
+# Mistakes common in English written by Arabic speakers (and other learners) that the
+# grammar checker (Harper) doesn't catch. Written for Qalam.
+# Format: wrong phrase=right phrase<TAB>why. Matched on whole words, ignoring case.
+# A trailing $ on the wrong phrase means it only counts at the end of a clause (before
+# punctuation or the end of the paragraph): "your welcome." but not "your welcome message".
+am agree=agree	“Agree” is a verb, so it doesn't take “am”: “I agree”.
+is agree=agrees	“Agree” is a verb, so it doesn't take “is”: “she agrees”.
+are agree=agree	“Agree” is a verb, so it doesn't take “are”: “we agree”.
+am disagree=disagree	“Disagree” is a verb, so it doesn't take “am”: “I disagree”.
+explain me=explain to me	“Explain” needs “to” before the person: “explain to me”.
+your welcome$=you're welcome	The reply to “thank you” is “you're welcome” (you are welcome).
+return back=return	“Return” already means “go back”.
+mention about=mention	“Mention” takes its object directly: “mention the plan”.
+emphasize on=emphasize	“Emphasize” takes its object directly: “emphasize the point”.
+emphasise on=emphasise	“Emphasise” takes its object directly: “emphasise the point”.
+cope up with=cope with	The phrase is “cope with”.

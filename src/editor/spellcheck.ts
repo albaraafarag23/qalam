@@ -1,5 +1,5 @@
-// Live spellcheck. The checking itself happens in Rust (src-tauri/src/spell.rs); this plugin
-// decides what to send and draws the result as underlines.
+// Live spelling and grammar check. The checking itself happens in Rust (src-tauri/src/spell.rs
+// and grammar.rs); this plugin decides what to send and draws the result as underlines.
 //
 // - Underlines are inline decorations on whole words, mapped through every edit, so they
 //   stay on the right word while a re-check is pending (research/grammarly.md).
@@ -11,16 +11,32 @@ import { Plugin, PluginKey, type EditorState, type Transaction } from "prosemirr
 import { Decoration, DecorationSet } from "prosemirror-view";
 import type { Node as PMNode } from "prosemirror-model";
 
-/** UTF-16 offsets of a misspelt word within a paragraph's text. */
-export interface Misspelling {
+/** A problem in a paragraph, as UTF-16 offsets into its text. */
+export interface Issue {
   from: number;
   to: number;
+  kind: "spelling" | "grammar";
+  /** Grammar: what's wrong, and fixes for from..to ("" removes it). */
+  message?: string;
+  replacements?: string[];
+}
+
+/** What an underline carries, for the suggestions card. */
+export interface Underline {
+  from: number;
+  to: number;
+  text: string;
+  kind: Issue["kind"];
+  message?: string;
+  replacements?: string[];
 }
 
 export interface SpellcheckOptions {
-  check(paragraphs: string[]): Promise<Misspelling[][]>;
+  check(paragraphs: string[]): Promise<Issue[][]>;
   /** How long typing must pause before changed paragraphs are re-checked. */
   delay?: number;
+  /** Paragraphs per request: a long document is checked in batches, nearest the cursor first. */
+  batch?: number;
 }
 
 interface Range {
@@ -38,18 +54,22 @@ interface SpellState {
   inflight: { pos: number; text: string }[];
   /** Where the last edit happened, to tell the word being typed from one merely clicked into. */
   lastEdit: number | null;
-  /** A misspelt word left un-underlined because it's still being typed. */
+  /** A problem left un-underlined because it's still being typed. */
   held: Range | null;
+  /** Ignored for this session: misspelt words, and grammar problems by their text. */
   ignored: Set<string>;
 }
 
 type Meta =
   | { type: "sent"; blocks: { pos: number; text: string }[] }
-  | { type: "results"; misspellings: Misspelling[][] }
+  | { type: "results"; issues: Issue[][] }
   | { type: "failed" }
   | { type: "release" }
   | { type: "enable"; on: boolean }
-  | { type: "ignore"; word: string };
+  | { type: "ignore"; key: string };
+
+/** Ignoring a misspelt word ignores it everywhere; a grammar problem, wherever that text recurs. */
+const ignoreKey = (kind: Issue["kind"], text: string) => (kind === "spelling" ? text : `grammar:${text}`);
 
 export const spellcheckKey = new PluginKey<SpellState>("spellcheck");
 
@@ -101,12 +121,12 @@ function wordAtCursor(state: EditorState): Range | null {
   return { from: $head.start() + start, to: $head.start() + end };
 }
 
-const sameRange = (a: Range | null, b: Range | null) => !!a && !!b && a.from === b.from && a.to === b.to;
+const contains = (r: Range, pos: number) => pos >= r.from && pos <= r.to;
 
 /** Replaces the underlines in the checked paragraphs whose text hasn't changed since. */
-function applyResults(prev: SpellState, doc: PMNode, results: Misspelling[][], cursorWord: Range | null): SpellState {
-  // Only the word being typed is held back, not one the cursor was merely moved into.
-  const typing = cursorWord && prev.lastEdit !== null && prev.lastEdit >= cursorWord.from && prev.lastEdit <= cursorWord.to ? cursorWord : null;
+function applyResults(prev: SpellState, doc: PMNode, results: Issue[][], cursorWord: Range | null): SpellState {
+  // Only what's being typed is held back, not a problem the cursor was merely moved into.
+  const typing = cursorWord && prev.lastEdit !== null && contains(cursorWord, prev.lastEdit) ? cursorWord : null;
   let decorations = prev.decorations;
   let held: Range | null = null;
   prev.inflight.forEach(({ pos, text }, i) => {
@@ -115,21 +135,23 @@ function applyResults(prev: SpellState, doc: PMNode, results: Misspelling[][], c
     if (!node?.isTextblock || blockText(node) !== text) return;
     const start = pos + 1;
     decorations = decorations.remove(decorations.find(start, pos + node.nodeSize - 1));
-    const words = (results[i] ?? [])
-      .map((m) => ({ from: start + m.from, to: start + m.to, word: text.slice(m.from, m.to) }))
-      .filter((m) => !prev.ignored.has(m.word));
-    const shown = words.filter((m) => {
-      if (!sameRange(m, typing)) return true;
-      held = { from: m.from, to: m.to };
+    const underlines: Underline[] = (results[i] ?? [])
+      .map((m) => ({ ...m, from: start + m.from, to: start + m.to, text: text.slice(m.from, m.to) }))
+      .filter((u) => !prev.ignored.has(ignoreKey(u.kind, u.text)));
+    const shown = underlines.filter((u) => {
+      if (!typing || !(contains(u, typing.from) || contains(u, typing.to))) return true;
+      held = { from: Math.min(u.from, typing.from), to: Math.max(u.to, typing.to) };
       return false;
     });
-    decorations = decorations.add(doc, shown.map((m) => Decoration.inline(m.from, m.to, { class: "misspelt" }, { word: m.word })));
+    const cls = { spelling: "misspelt", grammar: "grammar-issue" };
+    decorations = decorations.add(doc, shown.map((u) => Decoration.inline(u.from, u.to, { class: cls[u.kind] }, u)));
   });
   return { ...prev, decorations, inflight: [], held };
 }
 
 export function spellcheck(options: SpellcheckOptions): Plugin<SpellState> {
   const delay = options.delay ?? 300;
+  const batch = options.batch ?? 40;
   let startEnabled = true;
   try { startEnabled = localStorage.getItem("qalam.spellcheck") !== "off"; } catch {}
 
@@ -162,7 +184,7 @@ export function spellcheck(options: SpellcheckOptions): Plugin<SpellState> {
           case "sent":
             return { ...next, inflight: meta.blocks, pending: next.pending.filter((p) => !meta.blocks.some((b) => b.pos === p)) };
           case "results":
-            return next.enabled ? applyResults(next, tr.doc, meta.misspellings, wordAtCursor(newState)) : next;
+            return next.enabled ? applyResults(next, tr.doc, meta.issues, wordAtCursor(newState)) : next;
           case "failed":
             return { ...next, inflight: [] };
           case "release": {
@@ -174,8 +196,8 @@ export function spellcheck(options: SpellcheckOptions): Plugin<SpellState> {
           case "enable":
             return { ...next, enabled: meta.on, decorations: DecorationSet.empty, inflight: [], held: null, lastEdit: null, pending: meta.on ? allBlocks(tr.doc) : [] };
           case "ignore": {
-            const gone = next.decorations.find(undefined, undefined, (spec) => spec.word === meta.word);
-            return { ...next, ignored: new Set(next.ignored).add(meta.word), decorations: next.decorations.remove(gone) };
+            const gone = next.decorations.find(undefined, undefined, (spec) => ignoreKey(spec.kind, spec.text) === meta.key);
+            return { ...next, ignored: new Set(next.ignored).add(meta.key), decorations: next.decorations.remove(gone) };
           }
         }
         return next;
@@ -197,12 +219,15 @@ export function spellcheck(options: SpellcheckOptions): Plugin<SpellState> {
         const state = spellcheckKey.getState(view.state)!;
         if (!state.enabled || state.inflight.length || !state.pending.length) return;
         if (view.composing) return schedule();
-        const blocks = state.pending
+        const head = view.state.selection.head;
+        const blocks = [...state.pending]
+          .sort((a, b) => Math.abs(a - head) - Math.abs(b - head))
+          .slice(0, batch)
           .map((pos) => ({ pos, node: view.state.doc.nodeAt(pos) }))
           .filter((b): b is { pos: number; node: PMNode } => !!b.node?.isTextblock)
           .map((b) => ({ pos: b.pos, text: blockText(b.node) }));
         send({ type: "sent", blocks });
-        let results: Misspelling[][];
+        let results: Issue[][];
         try {
           results = await options.check(blocks.map((b) => b.text));
         } catch (e) {
@@ -212,14 +237,14 @@ export function spellcheck(options: SpellcheckOptions): Plugin<SpellState> {
         }
         // Don't change the text's markup under an input method; try again shortly.
         while (view.composing) await new Promise((r) => setTimeout(r, 100));
-        send({ type: "results", misspellings: results });
+        send({ type: "results", issues: results });
       }
 
       schedule(0);
       return {
         update(view, prevState) {
           const state = spellcheckKey.getState(view.state)!;
-          if (state.held && view.state.selection !== prevState.selection && !sameRange(state.held, wordAtCursor(view.state))) {
+          if (state.held && view.state.selection !== prevState.selection && !contains(state.held, view.state.selection.head)) {
             send({ type: "release" });
             return schedule(0);
           }
@@ -234,12 +259,12 @@ export function spellcheck(options: SpellcheckOptions): Plugin<SpellState> {
   });
 }
 
-/** The underlined word at a position, if there is one. */
-export function misspeltAt(state: EditorState, pos: number): (Range & { word: string }) | null {
+/** The underline at a position, if there is one. */
+export function underlineAt(state: EditorState, pos: number): Underline | null {
   const found = spellcheckKey.getState(state)?.decorations.find(pos, pos)[0];
-  return found ? { from: found.from, to: found.to, word: found.spec.word as string } : null;
+  return found ? { ...(found.spec as Underline), from: found.from, to: found.to } : null;
 }
 
 export const spellcheckEnabled = (state: EditorState) => spellcheckKey.getState(state)?.enabled ?? false;
 export const setSpellcheck = (tr: Transaction, on: boolean) => tr.setMeta(spellcheckKey, { type: "enable", on } satisfies Meta);
-export const ignoreWord = (tr: Transaction, word: string) => tr.setMeta(spellcheckKey, { type: "ignore", word } satisfies Meta);
+export const ignoreUnderline = (tr: Transaction, u: Underline) => tr.setMeta(spellcheckKey, { type: "ignore", key: ignoreKey(u.kind, u.text) } satisfies Meta);

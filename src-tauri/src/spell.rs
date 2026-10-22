@@ -1,6 +1,7 @@
 //! Offline spellcheck for Arabic and English with spellbook (a pure-Rust Hunspell, MPL-2.0)
-//! and bundled dictionaries: Ayaspell for Arabic (used under its MPL option) and SCOWL en_US.
-//! See research/spellcheck.md for why, and for measurements.
+//! and bundled dictionaries: Ayaspell for Arabic (used under its MPL option) and SCOWL for
+//! English, American (en_US) or British (en_GB-ise). See research/spellcheck.md for why, and
+//! for measurements. English grammar is checked in the same pass (grammar.rs).
 //!
 //! Each word goes to the dictionary of its script, so mixed Arabic/English text needs no
 //! language setting. حركات are ignored by the Arabic dictionary itself (its IGNORE line), so
@@ -13,6 +14,8 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 use spellbook::Dictionary;
+
+use crate::grammar::{English, Grammar};
 use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Manager};
 
@@ -24,7 +27,9 @@ pub struct Spellchecker(Mutex<Option<Checker>>);
 
 pub struct Checker {
     arabic: Dictionary,
-    english: Dictionary,
+    american: Dictionary,
+    british: Dictionary,
+    grammar: Grammar,
     /// wrong (without حركات) → (right, why)
     mistakes: HashMap<String, (String, String)>,
     personal: PathBuf,
@@ -36,11 +41,18 @@ enum Script {
     Latin,
 }
 
-/// A misspelt word, as UTF-16 offsets into the paragraph (what JavaScript strings use).
+/// A problem in a paragraph, as UTF-16 offsets (what JavaScript strings use).
 #[derive(Serialize, Debug, PartialEq)]
-pub struct Misspelling {
+pub struct Issue {
     from: usize,
     to: usize,
+    /// "spelling" or "grammar"
+    kind: &'static str,
+    /// Grammar only: what's wrong, and the fixes. Spelling suggestions are fetched on demand.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    replacements: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -160,7 +172,10 @@ impl Checker {
     fn load(dir: &PathBuf, personal: PathBuf) -> Result<Self, String> {
         let read = |name: &str| std::fs::read_to_string(dir.join(name)).map_err(|e| format!("Couldn't read {name}: {e}"));
         let arabic = Dictionary::new(&read("ar.aff")?, &read("ar.dic")?).map_err(|e| format!("Arabic dictionary: {e}"))?;
-        let english = Dictionary::new(&read("en_US.aff")?, &read("en_US.dic")?).map_err(|e| format!("English dictionary: {e}"))?;
+        let american = Dictionary::new(&read("en_US.aff")?, &read("en_US.dic")?).map_err(|e| format!("American English dictionary: {e}"))?;
+        let british = Dictionary::new(&read("en_GB.aff")?, &read("en_GB.dic")?).map_err(|e| format!("British English dictionary: {e}"))?;
+        let mut grammar = Grammar::new(&read("en-learner.txt")?);
+        grammar.warm_up(English::Us);
         let mistakes = read("ar-mistakes.txt")?
             .lines()
             .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
@@ -170,7 +185,7 @@ impl Checker {
                 Some((strip_marks(wrong.trim()), (right.trim().to_string(), why.trim().to_string())))
             })
             .collect();
-        let mut checker = Checker { arabic, english, mistakes, personal };
+        let mut checker = Checker { arabic, american, british, grammar, mistakes, personal };
         if let Ok(words) = std::fs::read_to_string(&checker.personal) {
             for word in words.lines().map(str::trim).filter(|w| !w.is_empty()) {
                 checker.learn(word);
@@ -179,29 +194,51 @@ impl Checker {
         Ok(checker)
     }
 
-    fn dictionary(&self, script: Script) -> &Dictionary {
-        match script {
-            Script::Arabic => &self.arabic,
-            Script::Latin => &self.english,
+    fn dictionary(&self, script: Script, english: English) -> &Dictionary {
+        match (script, english) {
+            (Script::Arabic, _) => &self.arabic,
+            (Script::Latin, English::Us) => &self.american,
+            (Script::Latin, English::Gb) => &self.british,
         }
     }
 
-    fn is_correct(&self, word: &str, script: Script) -> bool {
+    fn is_correct(&self, word: &str, script: Script, english: English) -> bool {
         match script {
             Script::Arabic => !self.mistakes.contains_key(&strip_marks(word)) && self.arabic.check(word),
-            Script::Latin => self.english.check(&word.replace('’', "'")),
+            Script::Latin => self.dictionary(script, english).check(&word.replace('’', "'")),
         }
     }
 
-    fn check(&self, paragraph: &str) -> Vec<Misspelling> {
-        tokens(paragraph)
+    /// Misspelt words, then grammar problems that don't overlap them (a misspelt word is
+    /// fixed first; its grammar is judged again afterwards).
+    fn check(&mut self, paragraph: &str, english: English) -> Vec<Issue> {
+        let mut issues: Vec<Issue> = tokens(paragraph)
             .into_iter()
-            .filter(|t| !self.is_correct(t.text, t.script))
-            .map(|t| Misspelling { from: t.from, to: t.to })
-            .collect()
+            .filter(|t| !self.is_correct(t.text, t.script, english))
+            .map(|t| Issue { from: t.from, to: t.to, kind: "spelling", message: None, replacements: vec![] })
+            .collect();
+        let problems = self.grammar.check(paragraph, english);
+        if !problems.is_empty() {
+            // Grammar positions count characters; JavaScript counts UTF-16 units.
+            let mut utf16 = Vec::with_capacity(paragraph.len() + 1);
+            let mut at = 0;
+            for c in paragraph.chars() {
+                utf16.push(at);
+                at += c.len_utf16();
+            }
+            utf16.push(at);
+            for p in problems {
+                let (from, to) = (utf16[p.from], utf16[p.to]);
+                if !issues.iter().any(|i| i.from < to && from < i.to) {
+                    issues.push(Issue { from, to, kind: "grammar", message: Some(p.message), replacements: p.replacements });
+                }
+            }
+            issues.sort_by_key(|i| i.from);
+        }
+        issues
     }
 
-    fn suggest(&self, word: &str) -> Suggestions {
+    fn suggest(&self, word: &str, english: English) -> Suggestions {
         let Some(script) = script_of(word) else {
             return Suggestions { words: vec![], note: None };
         };
@@ -216,7 +253,7 @@ impl Checker {
             return Suggestions { words: vec![right.clone()], note };
         }
         let mut found = Vec::new();
-        self.dictionary(script).suggest(&bare, &mut found);
+        self.dictionary(script, english).suggest(&bare, &mut found);
         for s in found {
             // Hunspell also proposes splitting a word in two; for Arabic those splits are
             // almost never right ("فسيك تبونها"), so they're left out.
@@ -257,7 +294,10 @@ impl Checker {
                 self.mistakes.remove(&bare);
                 self.arabic.add(&bare).is_ok()
             }
-            Some(Script::Latin) => self.english.add(&word.replace('’', "'")).is_ok(),
+            Some(Script::Latin) => {
+                let word = word.replace('’', "'");
+                self.american.add(&word).is_ok() && self.british.add(&word).is_ok()
+            }
             None => false,
         }
     }
@@ -351,17 +391,17 @@ pub fn preload(app: &AppHandle) {
     });
 }
 
-/// Misspelt words in each paragraph.
+/// Spelling and grammar problems in each paragraph.
 #[tauri::command]
-pub async fn spell_check(app: AppHandle, paragraphs: Vec<String>) -> Result<Vec<Vec<Misspelling>>, String> {
-    tauri::async_runtime::spawn_blocking(move || with_checker(&app, |c| paragraphs.iter().map(|p| c.check(p)).collect()))
+pub async fn spell_check(app: AppHandle, paragraphs: Vec<String>, english: English) -> Result<Vec<Vec<Issue>>, String> {
+    tauri::async_runtime::spawn_blocking(move || with_checker(&app, |c| paragraphs.iter().map(|p| c.check(p, english)).collect()))
         .await
         .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn spell_suggest(app: AppHandle, word: String) -> Result<Suggestions, String> {
-    tauri::async_runtime::spawn_blocking(move || with_checker(&app, |c| c.suggest(&word)))
+pub async fn spell_suggest(app: AppHandle, word: String, english: English) -> Result<Suggestions, String> {
+    tauri::async_runtime::spawn_blocking(move || with_checker(&app, |c| c.suggest(&word, english)))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -399,9 +439,14 @@ mod tests {
         Checker::load(&dir, std::env::temp_dir().join("qalam-test-no-personal-dictionary.txt")).unwrap()
     }
 
-    fn flagged(c: &Checker, text: &str) -> Vec<String> {
+    /// The misspelt words (spelling issues only).
+    fn flagged(c: &mut Checker, text: &str) -> Vec<String> {
+        flagged_as(c, text, English::Us, "spelling")
+    }
+
+    fn flagged_as(c: &mut Checker, text: &str, english: English, kind: &str) -> Vec<String> {
         let units: Vec<u16> = text.encode_utf16().collect();
-        c.check(text).iter().map(|m| String::from_utf16(&units[m.from..m.to]).unwrap()).collect()
+        c.check(text, english).iter().filter(|i| i.kind == kind).map(|i| String::from_utf16(&units[i.from..i.to]).unwrap()).collect()
     }
 
     #[test]
@@ -422,51 +467,72 @@ mod tests {
 
     #[test]
     fn arabic_with_and_without_harakat() {
-        let c = checker();
-        assert!(flagged(&c, "أنا اسْمِي الْبَرَاءِ وَحِيدٌ مِنْ مِصْرَ، عايش في الإمارات").is_empty());
-        assert_eq!(flagged(&c, "انا اسمي البراء"), ["انا"]);
+        let mut c = checker();
+        assert!(flagged(&mut c, "أنا اسْمِي الْبَرَاءِ وَحِيدٌ مِنْ مِصْرَ، عايش في الإمارات").is_empty());
+        assert_eq!(flagged(&mut c, "انا اسمي البراء"), ["انا"]);
     }
 
     #[test]
     fn known_mistakes_are_flagged_with_a_note() {
-        let c = checker();
-        assert_eq!(flagged(&c, "ذالك شيئ جميل"), ["ذالك", "شيئ"]);
-        let s = c.suggest("ذالك");
+        let mut c = checker();
+        assert_eq!(flagged(&mut c, "ذالك شيئ جميل"), ["ذالك", "شيئ"]);
+        let s = c.suggest("ذالك", English::Us);
         assert_eq!(s.words, ["ذلك"]);
         assert!(s.note.is_some());
         // Same word with حركات.
-        assert_eq!(flagged(&c, "ذَالِكَ"), ["ذَالِكَ"]);
+        assert_eq!(flagged(&mut c, "ذَالِكَ"), ["ذَالِكَ"]);
     }
 
     #[test]
     fn mixed_paragraph_uses_both_dictionaries() {
-        let c = checker();
-        assert_eq!(flagged(&c, "قرأت كتاب recieve عن الذى"), ["recieve", "الذى"]);
-        assert_eq!(c.suggest("recieve").words[0], "receive");
-        assert_eq!(c.suggest("الذى").words[0], "الذي");
+        let mut c = checker();
+        assert_eq!(flagged(&mut c, "قرأت كتاب recieve عن الذى"), ["recieve", "الذى"]);
+        assert_eq!(c.suggest("recieve", English::Us).words[0], "receive");
+        assert_eq!(c.suggest("الذى", English::Us).words[0], "الذي");
     }
 
     #[test]
     fn arabic_suggestions_are_close_ones() {
         let c = checker();
-        let s = c.suggest("اللغه").words;
+        let s = c.suggest("اللغه", English::Us).words;
         assert_eq!(s[0], "اللغة");
         assert!(!s.iter().any(|w| w == "غلاه" || w == "اغلله"), "{s:?}");
-        assert_eq!(c.suggest("الكتااب").words[0], "الكتاب");
-        assert_eq!(c.suggest("سيارت").words[0], "سيارة");
-        assert_eq!(c.suggest("هاذا").words[0], "هذا");
-        assert!(c.suggest("لاكن").words[..2].contains(&"لكن".to_string()));
-        assert_eq!(c.suggest("مسؤل").words[0], "مسؤول");
-        assert!(!c.suggest("العربيه").words.iter().any(|w| w.starts_with("أل")));
+        assert_eq!(c.suggest("الكتااب", English::Us).words[0], "الكتاب");
+        assert_eq!(c.suggest("سيارت", English::Us).words[0], "سيارة");
+        assert_eq!(c.suggest("هاذا", English::Us).words[0], "هذا");
+        assert!(c.suggest("لاكن", English::Us).words[..2].contains(&"لكن".to_string()));
+        assert_eq!(c.suggest("مسؤل", English::Us).words[0], "مسؤول");
+        assert!(!c.suggest("العربيه", English::Us).words.iter().any(|w| w.starts_with("أل")));
         assert!((arabic_distance("انا", "أنا") - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn american_or_british_spelling() {
+        let mut c = checker();
+        assert_eq!(flagged_as(&mut c, "My favourite colour is grey.", English::Us, "spelling"), ["favourite", "colour", "grey"]);
+        assert!(flagged_as(&mut c, "My favourite colour is grey.", English::Gb, "spelling").is_empty());
+        assert_eq!(flagged_as(&mut c, "My favorite color is gray.", English::Gb, "spelling"), ["favorite", "color", "gray"]);
+        assert_eq!(c.suggest("colour", English::Us).words[0], "color");
+        assert_eq!(c.suggest("color", English::Gb).words[0], "colour");
+    }
+
+    #[test]
+    fn grammar_and_spelling_together() {
+        let mut c = checker();
+        let text = "He go to school, I recieve teh letter. انا اسمي البراء";
+        assert_eq!(flagged_as(&mut c, text, English::Us, "spelling"), ["recieve", "teh", "انا"]);
+        assert_eq!(flagged_as(&mut c, text, English::Us, "grammar"), ["go"]);
+        let issue = c.check("He go home.", English::Us).into_iter().find(|i| i.kind == "grammar").unwrap();
+        assert_eq!(issue.replacements[0], "goes");
+        assert!(issue.message.is_some());
     }
 
     #[test]
     fn learned_words_are_accepted() {
         let mut c = checker();
-        assert_eq!(flagged(&c, "Albaraa wrote فسيكتبونها"), ["Albaraa", "فسيكتبونها"]);
+        assert_eq!(flagged(&mut c, "Albaraa wrote فسيكتبونها"), ["Albaraa", "فسيكتبونها"]);
         assert!(c.learn("Albaraa"));
         assert!(c.learn("فسيكتبونها"));
-        assert!(flagged(&c, "Albaraa wrote فسيكتبونها").is_empty());
+        assert!(flagged(&mut c, "Albaraa wrote فسيكتبونها").is_empty());
     }
 }

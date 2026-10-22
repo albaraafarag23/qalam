@@ -21,7 +21,7 @@ import { HARAKAT, activeHarakat, clearHarakat, setHaraka } from "./editor/haraka
 import { applyResults, previewHtml, targets, type Target } from "./editor/tashkeel";
 import { applyMemory, emptyMemory, learn, recordApplied, type TashkeelMemory } from "./editor/memory";
 import { edits as punctuationEdits, isEnglish, modelInput, words as splitWords } from "./editor/punctuation";
-import { ignoreWord, misspeltAt, setSpellcheck, spellcheck, spellcheckEnabled, type Misspelling } from "./editor/spellcheck";
+import { ignoreUnderline, setSpellcheck, spellcheck, spellcheckEnabled, underlineAt, type Issue, type Underline } from "./editor/spellcheck";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
@@ -45,6 +45,10 @@ interface PunctuationJob {
   text: string;
 }
 const punctuationJobs: PunctuationJob[] = [];
+// American or British English spelling (and grammar dialect), chosen in Settings.
+let englishVariant: "us" | "gb" = "us";
+try { englishVariant = localStorage.getItem("qalam.english") === "gb" ? "gb" : "us"; } catch {}
+
 let autoPunctuation = true;
 try { autoPunctuation = localStorage.getItem("qalam.autoPunctuation") !== "off"; } catch {}
 
@@ -86,7 +90,7 @@ const state = EditorState.create({
     rules,
     blockDirection,
     softCaret,
-    spellcheck({ check: (paragraphs) => invoke<Misspelling[][]>("spell_check", { paragraphs }) }),
+    spellcheck({ check: (paragraphs) => invoke<Issue[][]>("spell_check", { paragraphs, english: englishVariant }) }),
     history(),
     keymap({
       "Mod-z": undo,
@@ -100,6 +104,8 @@ const state = EditorState.create({
       // Alt+1…8 put a حركة on the letter before the cursor, Alt+0 clears them.
       ...Object.fromEntries(HARAKAT.map((h) => [`Alt-${h.key}`, setHaraka(h.mark)])),
       "Alt-0": clearHarakat,
+      // Opens the spelling/grammar card for the underline at the cursor, from the keyboard.
+      "Mod-.": () => openSpellCardAtCursor(),
       "Mod-Shift-t": () => {
         runTashkeel();
         return true;
@@ -508,13 +514,14 @@ autoPunctButton.addEventListener("click", () => {
   view.focus();
 });
 
-// ---- Spellcheck: suggestions for an underlined word ----
-// Clicking (or right-clicking) an underlined word opens a small card under it: up to six
-// suggestions, "Add to dictionary" and "Ignore". Its labels follow the word's language.
+// ---- Spelling and grammar: the card for an underlined word ----
+// Clicking (or right-clicking) an underline opens a small card under it. A misspelt word gets
+// up to six suggestions, "Add to dictionary" and "Ignore"; a grammar problem gets its fixes,
+// what's wrong, and "Ignore". The labels follow the text's language.
 const spellCard = $("spell-card");
 const spellSuggestions = $("spell-suggestions");
 const spellNote = $("spell-note");
-let spellTarget: { from: number; to: number; word: string } | null = null;
+let spellTarget: Underline | null = null;
 
 interface SpellSuggestions {
   words: string[];
@@ -535,14 +542,17 @@ function suggestionButton(label: string, onClick?: () => void) {
   return btn;
 }
 
-async function openSpellCard(target: { from: number; to: number; word: string }, anchor: DOMRect) {
+async function openSpellCard(target: Underline, anchor: DOMRect) {
   spellTarget = target;
-  const arabic = textDirection(target.word) === "rtl";
+  const arabic = textDirection(target.text) === "rtl";
   spellCard.dir = arabic ? "rtl" : "ltr";
   $("spell-add").textContent = arabic ? "أضف إلى القاموس" : "Add to dictionary";
+  $("spell-add").hidden = target.kind !== "spelling";
   $("spell-ignore").textContent = arabic ? "تجاهل" : "Ignore";
   spellNote.hidden = true;
-  spellSuggestions.replaceChildren(suggestionButton("…"));
+  spellCard.classList.toggle("is-grammar", target.kind === "grammar");
+  if (target.kind === "grammar") showSuggestions(target, { words: target.replacements ?? [], note: target.message ?? null }, arabic);
+  else spellSuggestions.replaceChildren(suggestionButton("…"));
   spellCard.hidden = false;
 
   // Under the word, lined up with its start (its right edge for Arabic), kept on screen.
@@ -552,30 +562,50 @@ async function openSpellCard(target: { from: number; to: number; word: string },
   const below = anchor.bottom + 6;
   spellCard.style.top = `${below + card.height > window.innerHeight - 8 ? anchor.top - card.height - 6 : below}px`;
 
-  const result = await invoke<SpellSuggestions>("spell_suggest", { word: target.word }).catch(() => ({ words: [], note: null }));
+  if (target.kind !== "spelling") return;
+  const result = await invoke<SpellSuggestions>("spell_suggest", { word: target.text, english: englishVariant }).catch(() => ({ words: [], note: null }));
   if (spellTarget !== target) return; // closed or moved on meanwhile
+  showSuggestions(target, result, arabic);
+}
+
+function showSuggestions(target: Underline, result: SpellSuggestions, arabic: boolean) {
+  // An empty replacement removes the text ("discuss about" → remove "about" is shown as such).
+  const label = (w: string) => (w ? w : arabic ? `احذف «${target.text}»` : `Remove “${target.text}”`);
   spellSuggestions.replaceChildren(
     ...(result.words.length
-      ? result.words.map((w) => suggestionButton(w, () => replaceMisspelt(target, w)))
+      ? result.words.map((w) => suggestionButton(label(w), () => replaceUnderlined(target, w)))
       : [suggestionButton(arabic ? "لا اقتراحات" : "No suggestions")]),
   );
   spellNote.textContent = result.note ?? "";
   spellNote.hidden = !result.note;
 }
 
-function replaceMisspelt(target: { from: number; to: number; word: string }, replacement: string) {
+function replaceUnderlined(target: Underline, replacement: string) {
   closeSpellCard();
   const current = view.state.doc.textBetween(target.from, target.to);
-  if (current === target.word) view.dispatch(view.state.tr.insertText(replacement, target.from, target.to));
+  if (current === target.text) {
+    const tr = replacement ? view.state.tr.insertText(replacement, target.from, target.to) : view.state.tr.delete(target.from, target.to);
+    view.dispatch(tr);
+  }
   view.focus();
 }
 
 function openSpellCardAt(event: MouseEvent): boolean {
-  const el = (event.target as HTMLElement).closest?.(".misspelt");
+  const el = (event.target as HTMLElement).closest?.(".misspelt, .grammar-issue");
   const at = view.posAtCoords({ left: event.clientX, top: event.clientY });
-  const target = el && at ? misspeltAt(view.state, at.pos) : null;
+  const target = el && at ? underlineAt(view.state, at.pos) : null;
   if (!el || !target) return false;
   openSpellCard(target, el.getBoundingClientRect());
+  return true;
+}
+
+function openSpellCardAtCursor(): boolean {
+  const target = underlineAt(view.state, view.state.selection.head);
+  if (!target) return false;
+  const start = view.coordsAtPos(target.from);
+  const end = view.coordsAtPos(target.to);
+  const anchor = new DOMRect(Math.min(start.left, end.left), start.top, Math.abs(end.left - start.left), start.bottom - start.top);
+  openSpellCard(target, anchor).then(() => spellCard.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus());
   return true;
 }
 
@@ -590,8 +620,8 @@ $("spell-add").addEventListener("click", async () => {
   closeSpellCard();
   if (!target) return;
   try {
-    await invoke("spell_add_word", { word: target.word });
-    view.dispatch(ignoreWord(view.state.tr, target.word));
+    await invoke("spell_add_word", { word: target.text });
+    view.dispatch(ignoreUnderline(view.state.tr, target));
   } catch (e) {
     console.warn(e);
   }
@@ -600,14 +630,21 @@ $("spell-add").addEventListener("click", async () => {
 $("spell-ignore").addEventListener("click", () => {
   const target = spellTarget;
   closeSpellCard();
-  if (target) view.dispatch(ignoreWord(view.state.tr, target.word));
+  if (target) view.dispatch(ignoreUnderline(view.state.tr, target));
   view.focus();
 });
 spellCard.addEventListener("mousedown", (e) => e.preventDefault()); // keep the editor's selection
 document.addEventListener("mousedown", (e) => {
-  if (!spellCard.hidden && !spellCard.contains(e.target as Node) && !(e.target as HTMLElement).closest?.(".misspelt")) closeSpellCard();
+  if (!spellCard.hidden && !spellCard.contains(e.target as Node) && !(e.target as HTMLElement).closest?.(".misspelt, .grammar-issue")) closeSpellCard();
 });
 document.addEventListener("keydown", (e) => {
+  // Up and down move between the card's choices when it was opened from the keyboard.
+  if (!spellCard.hidden && (e.key === "ArrowDown" || e.key === "ArrowUp") && spellCard.contains(document.activeElement)) {
+    const buttons = [...spellCard.querySelectorAll<HTMLButtonElement>("button:not(:disabled):not([hidden])")];
+    const i = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    buttons[(i + (e.key === "ArrowDown" ? 1 : buttons.length - 1)) % buttons.length]?.focus();
+    e.preventDefault();
+  }
   if (e.key === "Escape" && !spellCard.hidden) {
     closeSpellCard();
     view.focus();
@@ -648,6 +685,15 @@ async function refreshKeyStatus(message?: string) {
   $("key-status").textContent = message ?? (has ? "✓ A key is saved." : "No key saved yet.");
   $<HTMLButtonElement>("key-remove").disabled = !has;
 }
+const englishPicker = $<HTMLSelectElement>("english-variant");
+englishPicker.value = englishVariant;
+englishPicker.addEventListener("change", () => {
+  englishVariant = englishPicker.value === "gb" ? "gb" : "us";
+  try { localStorage.setItem("qalam.english", englishVariant); } catch {}
+  // Check everything again with the other dictionary.
+  if (spellcheckEnabled(view.state)) view.dispatch(setSpellcheck(view.state.tr, true));
+});
+
 function openSettings(message?: string) {
   $<HTMLInputElement>("api-key").value = "";
   refreshKeyStatus(message);

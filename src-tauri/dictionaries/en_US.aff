@@ -1,6 +1,10 @@
-# 2024-01-29 (Marco A.G.Pinto)
-# - Fix: apostrophe handling, by adding: WORDCHARS 0123456789’ to the .aff.
+# Affix file for en_US Hunspell Dictionary.
 #
+# Version 2026.02.25
+# Wed Feb 25 15:37:24 2026 -0500 [7e99eda]
+# 
+# https://wordlist.aspell.net
+# 
 
 SET UTF-8
 TRY esianrtolcdugmphbyfvkwzESIANRTOLCDUGMPHBYFVKWZ'

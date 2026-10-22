@@ -4,7 +4,9 @@ How other writing tools solve problems Qalam also has. **We learn techniques; we
 
 | Note | Question it answers |
 | --- | --- |
+| [qalam-approach.md](qalam-approach.md) | **Start here:** the strengths of all three studies combined into Qalam's design |
 | [spellcheck.md](spellcheck.md) | Which engine and dictionaries to use for Arabic and English, measured, plus the plan |
+| [english.md](english.md) | English grammar (Harper vs LanguageTool vs Grammarly) and British spelling, measured |
 | [grammarly.md](grammarly.md) | How Grammarly draws and maintains live underlines |
 | [obsidian.md](obsidian.md) | How Obsidian (Electron) does spellcheck |
 

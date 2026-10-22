@@ -1,4 +1,5 @@
 mod claude;
+mod grammar;
 mod memory;
 mod offline;
 mod punctuate;
