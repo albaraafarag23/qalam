@@ -8,12 +8,16 @@ import "prosemirror-view/style/prosemirror.css";
 import "./styles.css";
 
 import { EditorState, Selection, type Command } from "prosemirror-state";
+import { addColumnAfter, addColumnBefore, addRowAfter, addRowBefore, deleteColumn, deleteRow, deleteTable, goToNextCell, isInTable, tableEditing } from "prosemirror-tables";
+import { insertPageBreak, insertTable, setAlign, setSpacing, today } from "./editor/format";
+import { ImageView } from "./editor/image";
+import { findPlugin, findState, replaceAll, replaceCurrent, search, step, stopSearching } from "./editor/find";
 import type { Node as PMNode } from "prosemirror-model";
 import { EditorView } from "prosemirror-view";
 import { baseKeymap, setBlockType, toggleMark } from "prosemirror-commands";
 import { history, undo, redo, closeHistory } from "prosemirror-history";
 import { keymap } from "prosemirror-keymap";
-import { inputRules, wrappingInputRule, textblockTypeInputRule } from "prosemirror-inputrules";
+import { InputRule, inputRules, undoInputRule, wrappingInputRule, textblockTypeInputRule } from "prosemirror-inputrules";
 import { splitListItem, liftListItem, sinkListItem, wrapInList } from "prosemirror-schema-list";
 import { schema } from "./editor/schema";
 import { blockDirection, directionAt, textDirection } from "./editor/direction";
@@ -72,9 +76,31 @@ function toNumber(digits: string): number {
   return Number(digits.replace(/[\u0660-\u0669\u06F0-\u06F9]/g, (d) => String(d.charCodeAt(0) & 0xf)));
 }
 
+/** The direction of the paragraph being typed in (an empty one follows the text before it). */
+function typingDirection(state: EditorState, at: number): "rtl" | "ltr" | null {
+  return textDirection(state.doc.resolve(at).parent.textContent) ?? lastTypedDirection ?? directionAt(state);
+}
+
+// Quotation marks: «…» in Arabic, “…” in English. Opening after a space or at the start.
+const quotes = new InputRule(/"$/, (state, _match, start, end) => {
+  const $start = state.doc.resolve(start);
+  const before = start > $start.start() ? state.doc.textBetween(start - 1, start) : "";
+  const opening = !before || /[\s(\[{«“]/.test(before);
+  const mark = typingDirection(state, start) === "rtl" ? (opening ? "«" : "»") : opening ? "“" : "”";
+  return state.tr.insertText(mark, start, end);
+});
+
+// Digits typed in an Arabic paragraph become ٠-٩ when the writer chose that in Settings.
+const arabicIndicDigits = new InputRule(/[0-9]$/, (state, match, start, end) => {
+  if (arabicDigits !== "arabic-indic" || typingDirection(state, start) !== "rtl") return null;
+  return state.tr.insertText(String.fromCharCode(0x0660 + Number(match[0])), start, end);
+});
+
 // Markdown-style shortcuts while typing: "# " heading, "- " bullets, "1. " / "١. " numbers.
 const rules = inputRules({
   rules: [
+    quotes,
+    arabicIndicDigits,
     textblockTypeInputRule(/^(#{1,2})\s$/, nodes.heading, (m) => ({ level: m[1].length })),
     wrappingInputRule(/^\s*([-*•])\s$/, nodes.bullet_list),
     wrappingInputRule(
@@ -91,11 +117,16 @@ const state = EditorState.create({
   plugins: [
     keymap({ Enter: notePunctuationJob }), // first, so it sees every Enter exactly once
     rules,
+    // Tab moves between table cells (before the list keys below).
+    keymap({ Tab: goToNextCell(1), "Shift-Tab": goToNextCell(-1), "Mod-Enter": insertPageBreak }),
+    tableEditing(),
+    findPlugin,
     blockDirection,
     softCaret,
     spellcheck({ check: (paragraphs) => invoke<Issue[][]>("spell_check", { paragraphs, english: englishVariant }) }),
     history(),
     keymap({
+      Backspace: undoInputRule, // right after «, “ or ١: back to what was typed
       "Mod-z": undo,
       "Mod-y": redo,
       "Mod-Shift-z": redo,
@@ -107,6 +138,10 @@ const state = EditorState.create({
       // Alt+1…8 put a حركة on the letter before the cursor, Alt+0 clears them.
       ...Object.fromEntries(HARAKAT.map((h) => [`Alt-${h.key}`, setHaraka(h.mark)])),
       "Alt-0": clearHarakat,
+      "Mod-f": () => (openFind(false), true),
+      "Mod-p": () => (printDocument(), true),
+      "Mod-Shift-o": () => (toggleOutline(), true),
+      "Mod-h": () => (openFind(true), true),
       // Files, as in every editor.
       "Mod-n": () => (newDocument(), true),
       "Mod-o": () => (openDocument(), true),
@@ -115,6 +150,7 @@ const state = EditorState.create({
       // Opens the spelling/grammar card for the underline at the cursor, from the keyboard.
       "Mod-.": () => openSpellCardAtCursor(),
       "Mod-Shift-g": () => (runDeepCheck(), true),
+      "Mod-Shift-y": () => (showSynonyms(claudeButton), true),
       "Mod-Shift-t": () => {
         runTashkeel();
         return true;
@@ -132,6 +168,7 @@ let lastTypedDirection: "rtl" | "ltr" | null = null;
 const view = new EditorView(document.getElementById("page")!, {
   state,
   attributes: { spellcheck: "false" }, // our own checker will draw the underlines
+  nodeViews: { image: (node, view, getPos) => new ImageView(node, view, getPos) },
   // Typing an Arabic letter (e.g. right after switching keyboards) shows the Arabic tools.
   handleTextInput(_view, _from, _to, text) {
     lastTypedDirection = textDirection(text) ?? lastTypedDirection;
@@ -158,6 +195,7 @@ const view = new EditorView(document.getElementById("page")!, {
     if (tr.docChanged) {
       closeSpellCard();
       documentChanged();
+      outlineChanged();
     }
     updateStatus();
   },
@@ -226,16 +264,26 @@ function updateStatus() {
   const arabic =
     dir === "rtl" || lastTypedDirection === "rtl" || (!dir && !lastTypedDirection && directionAt(view.state) === "rtl");
   const english = !arabic && (dir === "ltr" || lastTypedDirection === "ltr" || (!dir && directionAt(view.state) === "ltr"));
-  showArabicTools(arabic);
-  showEnglishTools(english);
+  // Switching language swaps the groups at once: both showing for a moment would make the
+  // toolbar wrap and the page jump.
+  showArabicTools(arabic, english);
+  showEnglishTools(english, arabic);
 }
 
 // The language tools ease in, button by button, and ease out instead of vanishing. Hiding
 // waits a moment so moving the cursor across a mixed document doesn't make them flicker.
 function toolGroup(el: HTMLElement) {
   let hideTimer: number | undefined;
-  return (show: boolean) => {
+  /** `now`: hide at once, when the other language's tools take the place. */
+  return (show: boolean, now = false) => {
     const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (!show && now) {
+      clearTimeout(hideTimer);
+      hideTimer = undefined;
+      el.hidden = true;
+      el.classList.remove("leaving");
+      return;
+    }
     if (show) {
       clearTimeout(hideTimer);
       hideTimer = undefined;
@@ -758,15 +806,177 @@ async function insertImageFiles(files: File[], at: number) {
   }
 }
 
-const insertImageButton = $<HTMLButtonElement>("insert-image");
-insertImageButton.addEventListener("mousedown", (e) => e.preventDefault()); // keep the cursor
-insertImageButton.addEventListener("click", async () => {
+async function pickAndInsertImage() {
   try {
     const src = await invoke<string | null>("pick_image", { current: docPath });
     if (src) insertImage(src);
   } catch (e) {
     showDocState(String(e).replace(/^Error: /, ""));
   }
+}
+
+// ---- Find and replace ----
+const findBar = $("find-bar");
+const findInput = $<HTMLInputElement>("find-input");
+const replaceInput = $<HTMLInputElement>("replace-input");
+const findOptions = () => ({
+  ignoreMarks: $<HTMLInputElement>("find-marks").checked,
+  letterForms: $<HTMLInputElement>("find-forms").checked,
+  matchCase: $<HTMLInputElement>("find-case").checked,
+});
+function showFindCount() {
+  const s = findState(view.state);
+  $("find-count").textContent = !s.query ? "" : s.matches.length ? `${s.current + 1} / ${s.matches.length}` : "0";
+}
+function runSearch() {
+  view.dispatch(search(view.state.tr, findInput.value, findOptions()));
+  showFindCount();
+}
+function openFind(withReplace: boolean) {
+  findBar.hidden = false;
+  $("replace-row").hidden = !withReplace;
+  const { from, to } = view.state.selection;
+  const selected = view.state.doc.textBetween(from, to);
+  if (selected && !selected.includes("\n") && selected.length < 100) findInput.value = selected;
+  findInput.focus();
+  findInput.select();
+  runSearch();
+}
+function closeFind() {
+  findBar.hidden = true;
+  view.dispatch(stopSearching(view.state.tr));
+  view.focus();
+}
+function goTo(dir: 1 | -1) {
+  const tr = step(view.state, dir);
+  if (tr) view.dispatch(tr);
+  showFindCount();
+}
+findInput.addEventListener("input", runSearch);
+for (const id of ["find-marks", "find-forms", "find-case"]) $(id).addEventListener("change", runSearch);
+findInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") (e.preventDefault(), goTo(e.shiftKey ? -1 : 1));
+});
+replaceInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") (e.preventDefault(), $("replace-one").click());
+});
+findBar.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") (e.preventDefault(), closeFind());
+});
+$("find-next").addEventListener("click", () => goTo(1));
+$("find-prev").addEventListener("click", () => goTo(-1));
+$("find-close").addEventListener("click", closeFind);
+$("replace-one").addEventListener("click", () => {
+  const tr = replaceCurrent(view.state, replaceInput.value);
+  if (tr) view.dispatch(tr);
+  showFindCount();
+});
+$("replace-all").addEventListener("click", () => {
+  const result = replaceAll(view.state, replaceInput.value);
+  if (!result) return;
+  view.dispatch(result.tr);
+  showFindCount();
+  showDocState(`Replaced ${result.count} · تم استبدال ${result.count}`);
+});
+
+// ---- Settings: Arabic digits and page numbers ----
+let arabicDigits = "as-typed";
+let pageNumbers = "auto";
+try {
+  arabicDigits = localStorage.getItem("qalam.arabicDigits") ?? arabicDigits;
+  pageNumbers = localStorage.getItem("qalam.pageNumbers") ?? pageNumbers;
+} catch {}
+$<HTMLSelectElement>("arabic-digits").value = arabicDigits;
+$<HTMLSelectElement>("page-numbers").value = pageNumbers;
+$("arabic-digits").addEventListener("change", (e) => {
+  arabicDigits = (e.target as HTMLSelectElement).value;
+  try { localStorage.setItem("qalam.arabicDigits", arabicDigits); } catch {}
+});
+$("page-numbers").addEventListener("change", (e) => {
+  pageNumbers = (e.target as HTMLSelectElement).value;
+  try { localStorage.setItem("qalam.pageNumbers", pageNumbers); } catch {}
+});
+/** Page numbers for a Word file: none, 123, or ١٢٣ (automatic: when most of the text is Arabic). */
+function pageNumberStyle(doc: PMNode): "none" | "western" | "arabic-indic" {
+  if (pageNumbers === "none" || pageNumbers === "western") return pageNumbers;
+  const text = doc.textContent;
+  const arabic = (text.match(/[\u0600-\u06FF]/g) ?? []).length;
+  const latin = (text.match(/[A-Za-z]/g) ?? []).length;
+  return arabic > latin ? "arabic-indic" : "western";
+}
+
+// ---- Outline: the document's headings, to jump between them ----
+const outline = $("outline");
+function renderOutline() {
+  if (outline.hidden) return;
+  const list = $("outline-list");
+  const items: HTMLElement[] = [];
+  view.state.doc.descendants((node, pos) => {
+    if (node.type.name !== "heading") return true;
+    const b = document.createElement("button");
+    b.className = `level-${node.attrs.level}`;
+    b.textContent = node.textContent || "…";
+    b.dir = "auto";
+    b.addEventListener("mousedown", (e) => e.preventDefault());
+    b.addEventListener("click", () => {
+      view.dispatch(view.state.tr.setSelection(Selection.near(view.state.doc.resolve(pos + 1))).scrollIntoView());
+      view.focus();
+    });
+    items.push(b);
+    return false;
+  });
+  if (!items.length) {
+    const p = document.createElement("p");
+    p.className = "outline-empty";
+    p.textContent = "No headings yet. Make one with H1 or H2 (or type # and a space).";
+    items.push(p);
+  }
+  list.replaceChildren(...items);
+}
+function toggleOutline() {
+  outline.hidden = !outline.hidden;
+  document.body.classList.toggle("with-outline", !outline.hidden);
+  $("outline-toggle").textContent = outline.hidden ? "☰ Outline" : "☰ Hide outline";
+  renderOutline();
+}
+$("outline-toggle").addEventListener("click", toggleOutline);
+let outlineTimer: number | undefined;
+function outlineChanged() {
+  clearTimeout(outlineTimer);
+  outlineTimer = window.setTimeout(renderOutline, 300);
+}
+
+// ---- Insert and Paragraph menus ----
+const run = (command: Command) => {
+  command(view.state, view.dispatch);
+  view.focus();
+};
+const insertButton = $("insert-button");
+insertButton.addEventListener("mousedown", () => {
+  // Table rows and columns appear in the menu only when the cursor is in a table.
+  $("table-items").hidden = !isInTable(view.state);
+});
+menuButton(insertButton, $("insert-menu"), (item) => {
+  const arabic = (textDirection(view.state.selection.$from.parent.textContent) ?? directionAt(view.state)) === "rtl";
+  const actions: Record<string, () => void> = {
+    image: pickAndInsertImage,
+    table: () => run(insertTable(3, 3)),
+    "page-break": () => run(insertPageBreak),
+    date: () => (view.dispatch(view.state.tr.insertText(today("gregorian", arabic))), view.focus()),
+    hijri: () => (view.dispatch(view.state.tr.insertText(today("hijri", arabic))), view.focus()),
+    "row-before": () => run(addRowBefore),
+    "row-after": () => run(addRowAfter),
+    "col-before": () => run(addColumnBefore),
+    "col-after": () => run(addColumnAfter),
+    "delete-row": () => run(deleteRow),
+    "delete-col": () => run(deleteColumn),
+    "delete-table": () => run(deleteTable),
+  };
+  actions[item.dataset.insert!]?.();
+});
+menuButton($("paragraph-button"), $("paragraph-menu"), (item) => {
+  if (item.dataset.align) run(setAlign(item.dataset.align));
+  else if (item.dataset.spacing) run(setSpacing(item.dataset.spacing));
 });
 
 // ---- Deep check with Claude (opt-in) ----
@@ -889,6 +1099,7 @@ function acceptTransform(): boolean {
 menuButton(claudeButton, $("claude-menu"), (item) => {
   const action = item.dataset.action!;
   if (action === "check") runDeepCheck();
+  else if (action === "synonyms") showSynonyms(claudeButton);
   else runTransform(action);
 });
 
@@ -1018,10 +1229,7 @@ async function showSynonyms(button: HTMLElement) {
     claudeError(e);
   }
 }
-for (const id of ["synonyms-ar", "synonyms-en"]) {
-  $(id).addEventListener("mousedown", (e) => e.preventDefault());
-  $(id).addEventListener("click", () => showSynonyms($(id)));
-}
+
 
 // ---- Settings: the Claude API key ----
 async function refreshMemoryStatus() {
@@ -1130,6 +1338,7 @@ function loadDocument(doc: PMNode, file: { path: string | null; name: string | n
   restoredUnsaved = unsaved;
   keepOriginal = lossy;
   shownDirty = null; // a new name for the window title
+  rememberRecent(docPath, docName);
   lastTypedDirection = null;
   punctuationJobs.length = 0;
   closeSpellCard();
@@ -1209,13 +1418,14 @@ async function saveDocument(saveAs = false): Promise<boolean> {
     const doc = view.state.doc;
     if (docKind === "docx") {
       const arabicFont = WORD_ARABIC_FONTS[document.documentElement.dataset.arabicFont ?? "amiri"] ?? "Amiri";
-      await invoke("write_document_base64", { path: docPath, base64: await toDocx(doc, { arabicFont, latinFont: "Noto Serif" }) });
+      await invoke("write_document_base64", { path: docPath, base64: await toDocx(doc, { arabicFont, latinFont: "Noto Serif", pageNumbers: pageNumberStyle(doc) }) });
     } else {
       await invoke("write_document", { path: docPath, contents: docKind === "qalam" ? toQalam(doc) : toText(doc) });
     }
     savedDoc = doc;
     restoredUnsaved = false;
     shownDirty = null;
+    rememberRecent(docPath, docName);
     invoke("clear_backup").catch(() => {});
     showDocState(docKind === "text" ? "Saved as plain text (headings, lists and bold aren't kept in .txt)" : "Saved");
     return true;
@@ -1279,11 +1489,63 @@ document.addEventListener("mousedown", (e) => {
   }
 });
 
+// ---- Recent files (the last 8 opened or saved), at the bottom of the File menu ----
+interface RecentFile { path: string; name: string }
+function recentFiles(): RecentFile[] {
+  try {
+    return JSON.parse(localStorage.getItem("qalam.recent") ?? "[]");
+  } catch {
+    return [];
+  }
+}
+function rememberRecent(path: string | null, name: string | null) {
+  if (!path || !name) return;
+  const list = [{ path, name }, ...recentFiles().filter((r) => r.path !== path)].slice(0, 8);
+  try { localStorage.setItem("qalam.recent", JSON.stringify(list)); } catch {}
+}
+function forgetRecent(path: string) {
+  try { localStorage.setItem("qalam.recent", JSON.stringify(recentFiles().filter((r) => r.path !== path))); } catch {}
+}
+function showRecentFiles() {
+  const box = $("recent-files");
+  const list = recentFiles().filter((r) => r.path !== docPath);
+  box.replaceChildren();
+  if (!list.length) return;
+  box.appendChild(document.createElement("hr"));
+  for (const r of list) {
+    const b = document.createElement("button");
+    b.setAttribute("role", "menuitem");
+    b.dataset.recent = r.path;
+    b.title = r.path;
+    const label = b.appendChild(document.createElement("span"));
+    label.textContent = displayName(r.name);
+    label.dir = "auto";
+    box.appendChild(b);
+  }
+}
+async function openRecent(path: string) {
+  if (!(await confirmDiscard())) return;
+  try {
+    await showOpened(await invoke<OpenedDocument>("read_document", { path }));
+    invoke("clear_backup").catch(() => {});
+  } catch (e) {
+    forgetRecent(path);
+    showDocState(String(e).replace(/^Error: /, ""));
+  }
+}
+
+function printDocument() {
+  invoke("print_document").catch((e) => showDocState(String(e)));
+}
+
 // The File menu (the toolbar's document button).
+$("file-button").addEventListener("mousedown", showRecentFiles);
 menuButton($("file-button"), $("file-menu"), (item) => {
   const action = item.dataset.file;
-  if (action === "new") newDocument();
+  if (item.dataset.recent) openRecent(item.dataset.recent);
+  else if (action === "new") newDocument();
   else if (action === "open") openDocument();
+  else if (action === "print") printDocument();
   else if (action) saveDocument(action === "save-as");
 });
 

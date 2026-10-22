@@ -60,6 +60,7 @@ pub fn run() {
             documents::load_backup,
             documents::clear_backup,
             documents::close_window,
+            documents::print_document,
             claude::set_api_key,
             claude::has_api_key,
             claude::clear_api_key,

@@ -38,9 +38,20 @@ function blockText(node: PMNode): string {
   return out;
 }
 
-/** A block as text: a paragraph or heading as is, a list as one line per item. */
+/** A block as text: a paragraph or heading as is, a list as one line per item, a table as one
+    line per row with cells separated by tabs. */
 function blockToText(node: PMNode, depth: number): string {
   if (node.isTextblock) return blockText(node);
+  if (node.type.name === "page_break") return "";
+  if (node.type.name === "table") {
+    const rows: string[] = [];
+    node.forEach((row) => {
+      const cells: string[] = [];
+      row.forEach((cell) => cells.push(blockToText(cell, depth).replace(/\n+/g, " ")));
+      rows.push(cells.join("\t"));
+    });
+    return rows.join("\n");
+  }
   if (node.type.name === "bullet_list" || node.type.name === "ordered_list") {
     const start = node.attrs.order ?? 1;
     const indent = "  ".repeat(depth);
@@ -117,9 +128,10 @@ export async function fromDocx(schema: Schema, base64: string): Promise<{ doc: P
     },
   );
   const html = new DOMParser().parseFromString(`<body>${result.value}</body>`, "text/html");
-  // Tables aren't in Qalam yet (their text is kept as plain paragraphs), so saving over such a
-  // file would lose them: the caller saves a copy instead. Images come in as images.
-  const lossy = !!html.body.querySelector("table");
+  // Anything Qalam can't show would be lost by saving over the file; the caller then saves a
+  // copy instead. Text, headings, lists, images and tables all come in, so nothing is flagged
+  // today; this is where a new unsupported part (text boxes, footnotes…) would be detected.
+  const lossy = false;
   return { doc: PMDOMParser.fromSchema(schema).parse(html.body), lossy };
 }
 
@@ -127,6 +139,8 @@ export interface DocxOptions {
   /** The Arabic font's name as Word knows it, e.g. "Amiri". */
   arabicFont: string;
   latinFont: string;
+  /** A page number at the bottom of each page: 123, ١٢٣, or none. */
+  pageNumbers?: "none" | "western" | "arabic-indic";
 }
 
 /** The widest an image may be in Word: the text width of an A4 page with normal margins. */
@@ -162,7 +176,7 @@ async function prepareImage(src: string): Promise<PreparedImage | null> {
 
 export async function toDocx(doc: PMNode, options: DocxOptions): Promise<string> {
   const docx = await import("docx");
-  const { Document, Packer, Paragraph, TextRun, ImageRun, HeadingLevel, LevelFormat, AlignmentType } = docx;
+  const { Document, Packer, Paragraph, TextRun, ImageRun, PageBreak, Table, TableRow, TableCell, WidthType, HeadingLevel, LevelFormat, AlignmentType, Footer, PageNumber, NumberFormat } = docx;
   const font = { ascii: options.latinFont, hAnsi: options.latinFont, cs: options.arabicFont };
 
   const images = new Map<string, PreparedImage | null>();
@@ -182,11 +196,14 @@ export async function toDocx(doc: PMNode, options: DocxOptions): Promise<string>
       if (child.type.name === "image") {
         const image = images.get(child.attrs.src);
         if (image) {
+          // A resized image keeps its proportions at the width chosen in Qalam.
+          const width = child.attrs.width ? Math.min(child.attrs.width, MAX_IMAGE_WIDTH) : image.width;
+          const height = Math.round((image.height * width) / image.width);
           out.push(
             new ImageRun({
               type: image.type,
               data: image.data,
-              transformation: { width: image.width, height: image.height },
+              transformation: { width, height },
               ...(child.attrs.alt ? { altText: { name: child.attrs.alt, description: child.attrs.alt, title: child.attrs.alt } } : {}),
             }),
           );
@@ -220,28 +237,49 @@ export async function toDocx(doc: PMNode, options: DocxOptions): Promise<string>
     return false;
   };
 
-  const paragraphs: InstanceType<typeof Paragraph>[] = [];
-  const walk = (node: PMNode, list?: { ordered: boolean; level: number }) => {
+  const ALIGN = { start: AlignmentType.START, center: AlignmentType.CENTER, end: AlignmentType.END, justify: AlignmentType.BOTH } as const;
+  type Block = InstanceType<typeof Paragraph> | InstanceType<typeof Table>;
+
+  /** Word blocks for a node's children: paragraphs, list items, page breaks and tables. */
+  const blocks = (node: PMNode, list?: { ordered: boolean; level: number }): Block[] => {
+    const out: Block[] = [];
     node.forEach((child) => {
       if (child.isTextblock) {
         const heading =
           child.type.name === "heading" ? (child.attrs.level === 1 ? HeadingLevel.HEADING_1 : HeadingLevel.HEADING_2) : undefined;
-        paragraphs.push(
+        out.push(
           new Paragraph({
             children: runs(child),
             heading,
             bidirectional: isRtl(child),
+            ...(child.attrs.align ? { alignment: ALIGN[child.attrs.align as keyof typeof ALIGN] } : {}),
+            ...(child.attrs.spacing ? { spacing: { line: Math.round(240 * Number(child.attrs.spacing)) } } : {}),
             ...(list ? (list.ordered ? { numbering: { reference: "qalam-numbers", level: list.level } } : { bullet: { level: list.level } }) : {}),
           }),
         );
+      } else if (child.type.name === "page_break") {
+        out.push(new Paragraph({ children: [new PageBreak()] }));
+      } else if (child.type.name === "table") {
+        const rows: InstanceType<typeof TableRow>[] = [];
+        child.forEach((row, _o, r) => {
+          const cells: InstanceType<typeof TableCell>[] = [];
+          row.forEach((cell) => {
+            const content = blocks(cell);
+            cells.push(new TableCell({ children: content.length ? content : [new Paragraph({})], columnSpan: cell.attrs.colspan, rowSpan: cell.attrs.rowspan }));
+          });
+          rows.push(new TableRow({ children: cells, tableHeader: r === 0 && row.firstChild?.type.name === "table_header" }));
+        });
+        // An Arabic table runs right to left, as in the editor.
+        out.push(new Table({ rows, width: { size: 100, type: WidthType.PERCENTAGE }, visuallyRightToLeft: isRtl(child) }));
       } else if (child.type.name === "bullet_list" || child.type.name === "ordered_list") {
-        walk(child, { ordered: child.type.name === "ordered_list", level: list ? Math.min(list.level + 1, 8) : 0 });
+        out.push(...blocks(child, { ordered: child.type.name === "ordered_list", level: list ? Math.min(list.level + 1, 8) : 0 }));
       } else {
-        walk(child, list);
+        out.push(...blocks(child, list));
       }
     });
+    return out;
   };
-  walk(doc);
+  const paragraphs = blocks(doc);
 
   const document = new Document({
     styles: { default: { document: { run: { font, size: 24, sizeComplexScript: 28 } } } },
@@ -258,7 +296,25 @@ export async function toDocx(doc: PMNode, options: DocxOptions): Promise<string>
         },
       ],
     },
-    sections: [{ children: paragraphs }],
+    sections: [
+      {
+        children: paragraphs,
+        ...(options.pageNumbers && options.pageNumbers !== "none"
+          ? {
+              properties: {
+                page: {
+                  pageNumbers: { start: 1, formatType: options.pageNumbers === "arabic-indic" ? NumberFormat.HINDI_NUMBERS : NumberFormat.DECIMAL },
+                },
+              },
+              footers: {
+                default: new Footer({
+                  children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ children: [PageNumber.CURRENT], font })] })],
+                }),
+              },
+            }
+          : {}),
+      },
+    ],
   });
   return Packer.toBase64String(document);
 }

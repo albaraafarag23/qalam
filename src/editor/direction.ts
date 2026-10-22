@@ -24,7 +24,7 @@ export function directionAt(state: EditorState): "rtl" | "ltr" | null {
   return previous;
 }
 
-const LIST_NODES = new Set(["bullet_list", "ordered_list", "list_item"]);
+const LIST_NODES = new Set(["bullet_list", "ordered_list", "list_item", "table"]); // tables too: Arabic ones run right to left
 
 // Every list, list item and text block gets an explicit dir from its own text:
 // - dir="auto" can't be used on lists: the browser skips descendants that carry their

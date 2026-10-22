@@ -19,8 +19,11 @@
         <span class="sep"></span>
         <button data-cmd="ul" title="Bulleted list">•</button>
         <button data-cmd="ol" title="Numbered list">1.</button>
-        <button id="insert-image" title="Insert image (you can also paste or drag one in) · إدراج صورة">
-          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="5.5" cy="6.25" r="1.25" fill="currentColor"/><path d="M2.5 12l3.5-3.5 2.5 2.5 2-2 3 3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+        <button id="paragraph-button" title="Paragraph: alignment and line spacing · الفقرة" aria-haspopup="menu" aria-expanded="false">
+          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M2 3.5h12M2 6.5h8M2 9.5h12M2 12.5h8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        </button>
+        <button id="insert-button" title="Insert: image, table, page break, date · إدراج" aria-haspopup="menu" aria-expanded="false">
+          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M8 3v10M3 8h10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
         </button>
         <span class="sep"></span>
         <select id="arabic-font" title="Arabic font">
@@ -38,14 +41,12 @@
             <option value="full">كامل</option>
             <option value="remove">إزالة</option>
           </select>
-          <button id="synonyms-ar" class="word-tool" title="✦ مرادفات للكلمة عند المؤشر (Claude)">مرادفات</button>
         </div>
         <!-- Shown only while writing English. -->
         <div id="english-tools" class="arabic-tools english-tools" hidden>
           <span class="sep"></span>
           <button id="punctuate" class="word-tool" title="Add missing capitals and punctuation to this paragraph or the selection (works offline)">Punctuate</button>
           <button id="case-button" class="word-tool" title="Change case: Sentence case, Title Case, lowercase, UPPERCASE" aria-haspopup="menu">Aa ▾</button>
-          <button id="synonyms-en" class="word-tool" title="✦ Synonyms for the word at the cursor, chosen for this sentence (Claude)">Synonyms</button>
         </div>
       </div>
       <div class="toolbar-end">
@@ -60,6 +61,27 @@
       </div>
     </header>
 
+    <!-- Find and replace (Ctrl+F, Ctrl+H). -->
+    <section id="find-bar" class="find-bar" hidden aria-label="Find and replace">
+      <div class="find-row">
+        <input id="find-input" type="search" placeholder="Find · بحث" autocomplete="off" spellcheck="false" dir="auto" />
+        <span id="find-count" class="find-count"></span>
+        <button id="find-prev" title="Previous (Shift+Enter)">↑</button>
+        <button id="find-next" title="Next (Enter)">↓</button>
+        <button id="find-close" title="Close (Esc)">✕</button>
+      </div>
+      <div class="find-row" id="replace-row">
+        <input id="replace-input" type="text" placeholder="Replace with · استبدال بـ" autocomplete="off" spellcheck="false" dir="auto" />
+        <button id="replace-one">Replace</button>
+        <button id="replace-all">All · الكل</button>
+      </div>
+      <div class="find-options">
+        <label><input type="checkbox" id="find-marks" checked /> Ignore حركات</label>
+        <label><input type="checkbox" id="find-forms" checked /> أ إ آ ا · ى ي alike</label>
+        <label><input type="checkbox" id="find-case" /> Match case</label>
+      </div>
+    </section>
+
     <div id="claude-menu" class="menu" role="menu" hidden>
       <button data-action="check" role="menuitem"><span>Check grammar · تدقيق</span><kbd>Ctrl+Shift+G</kbd></button>
       <hr />
@@ -69,7 +91,39 @@
       <button data-action="clearer" role="menuitem"><span>Rewrite: clearer · أوضح</span></button>
       <hr />
       <button data-action="translate" role="menuitem"><span>Translate Arabic ⇄ English · ترجمة</span></button>
+      <button data-action="synonyms" role="menuitem"><span>Synonyms for this word · مرادفات</span><kbd>Ctrl+Shift+Y</kbd></button>
       <p class="menu-note">Works on the paragraph at the cursor, or the selection. Needs a Claude API key.</p>
+    </div>
+
+    <div id="insert-menu" class="menu" role="menu" hidden>
+      <button data-insert="image" role="menuitem"><span>Image… · صورة</span></button>
+      <button data-insert="table" role="menuitem"><span>Table · جدول</span></button>
+      <button data-insert="page-break" role="menuitem"><span>Page break · فاصل صفحة</span><kbd>Ctrl+Enter</kbd></button>
+      <hr />
+      <button data-insert="date" role="menuitem"><span>Today's date · تاريخ اليوم</span></button>
+      <button data-insert="hijri" role="menuitem"><span>Hijri date · التاريخ الهجري</span></button>
+      <div id="table-items" hidden>
+        <hr />
+        <button data-insert="row-before" role="menuitem"><span>Row above · صف قبل</span></button>
+        <button data-insert="row-after" role="menuitem"><span>Row below · صف بعد</span></button>
+        <button data-insert="col-before" role="menuitem"><span>Column before · عمود قبل</span></button>
+        <button data-insert="col-after" role="menuitem"><span>Column after · عمود بعد</span></button>
+        <button data-insert="delete-row" role="menuitem"><span>Delete row · حذف الصف</span></button>
+        <button data-insert="delete-col" role="menuitem"><span>Delete column · حذف العمود</span></button>
+        <button data-insert="delete-table" role="menuitem"><span>Delete table · حذف الجدول</span></button>
+      </div>
+    </div>
+
+    <div id="paragraph-menu" class="menu" role="menu" hidden>
+      <button data-align="start" role="menuitem"><span>Align to the start · محاذاة للبداية</span></button>
+      <button data-align="center" role="menuitem"><span>Centre · توسيط</span></button>
+      <button data-align="end" role="menuitem"><span>Align to the end · محاذاة للنهاية</span></button>
+      <button data-align="justify" role="menuitem"><span>Justify · ضبط</span></button>
+      <hr />
+      <button data-spacing="1" role="menuitem"><span>Line spacing 1 · تباعد ١</span></button>
+      <button data-spacing="1.15" role="menuitem"><span>Line spacing 1.15</span></button>
+      <button data-spacing="1.5" role="menuitem"><span>Line spacing 1.5</span></button>
+      <button data-spacing="2" role="menuitem"><span>Line spacing 2 · تباعد ٢</span></button>
     </div>
 
     <div id="case-menu" class="menu" role="menu" hidden>
@@ -87,7 +141,16 @@
       <hr />
       <button data-file="save" role="menuitem"><span>Save · حفظ</span><kbd>Ctrl+S</kbd></button>
       <button data-file="save-as" role="menuitem"><span>Save as… · حفظ باسم</span><kbd>Ctrl+Shift+S</kbd></button>
+      <hr />
+      <button data-file="print" role="menuitem"><span>Print or save as PDF… · طباعة</span><kbd>Ctrl+P</kbd></button>
+      <div id="recent-files"></div>
     </div>
+
+    <!-- The document's headings, to jump between them (Ctrl+Shift+O). -->
+    <nav id="outline" class="outline" hidden aria-label="Outline">
+      <div class="outline-head">Outline · المخطط</div>
+      <div id="outline-list"></div>
+    </nav>
 
     <main class="desk">
       <article id="page" class="page"></article>
@@ -135,6 +198,19 @@
         <option value="gb">British (colour, organise)</option>
       </select>
       <hr class="settings-rule" />
+      <label for="arabic-digits">Digits in Arabic text · الأرقام</label>
+      <p class="hint">What digits typed in an Arabic paragraph become.</p>
+      <select id="arabic-digits" class="settings-select">
+        <option value="as-typed">As typed (123 stays 123)</option>
+        <option value="arabic-indic">Arabic-Indic (123 becomes ١٢٣)</option>
+      </select>
+      <label for="page-numbers" class="settings-label-gap">Page numbers in Word files · أرقام الصفحات</label>
+      <select id="page-numbers" class="settings-select">
+        <option value="auto">Automatic: ١٢٣ for Arabic documents, 123 otherwise</option>
+        <option value="western">123</option>
+        <option value="none">None</option>
+      </select>
+      <hr class="settings-rule" />
       <label>تشكيل learning</label>
       <p id="memory-status" class="hint"></p>
       <div class="settings-actions">
@@ -160,6 +236,7 @@
       <span class="status-left">
         <span id="doc-status" class="doc-status"></span>
         <span id="words">0 words</span>
+        <button id="outline-toggle" class="status-toggle" title="Show the document's headings, to jump between them (Ctrl+Shift+O)">☰ Outline</button>
         <button id="spellcheck-toggle" class="status-toggle" title="Underlines misspelt Arabic and English words; click one for suggestions">Spellcheck: on</button>
         <button id="auto-punct" class="status-toggle" title="Adds missing capitals and punctuation to an English paragraph when you press Enter at its end">Auto-punctuation: on</button>
       </span>

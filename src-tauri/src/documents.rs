@@ -191,6 +191,12 @@ pub fn clear_backup(app: AppHandle) -> Result<(), String> {
     }
 }
 
+/// Opens the system's print dialog for the page (it also offers saving as PDF).
+#[tauri::command]
+pub fn print_document(window: WebviewWindow) -> Result<(), String> {
+    window.print().map_err(|e| e.to_string())
+}
+
 /// Closes the window for real, once the editor has dealt with unsaved changes.
 #[tauri::command]
 pub fn close_window(window: WebviewWindow) -> Result<(), String> {
