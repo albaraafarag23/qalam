@@ -30,3 +30,7 @@ ort = { version = "=2.0.0-rc.15", default-features = false, features = ["load-dy
 zip = { version = "2", default-features = false, features = ["deflate"] }
 sha2 = "0.10"
 
+# Windows only: reach the WebView2 settings that Tauri doesn't expose (see lib.rs).
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.39"
+windows-core = "0.62"
