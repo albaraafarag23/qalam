@@ -176,7 +176,7 @@ async function prepareImage(src: string): Promise<PreparedImage | null> {
 
 export async function toDocx(doc: PMNode, options: DocxOptions): Promise<string> {
   const docx = await import("docx");
-  const { Document, Packer, Paragraph, TextRun, ImageRun, PageBreak, Table, TableRow, TableCell, WidthType, HeadingLevel, LevelFormat, AlignmentType, Footer, PageNumber, NumberFormat } = docx;
+  const { Document, Packer, Paragraph, TextRun, ImageRun, PageBreak, Table, TableRow, TableCell, WidthType, HeadingLevel, LevelFormat, AlignmentType, Footer, PageNumber, NumberFormat, ShadingType } = docx;
   const font = { ascii: options.latinFont, hAnsi: options.latinFont, cs: options.arabicFont };
 
   const images = new Map<string, PreparedImage | null>();
@@ -213,6 +213,11 @@ export async function toDocx(doc: PMNode, options: DocxOptions): Promise<string>
       if (!child.isText) return;
       const bold = child.marks.some((m) => m.type.name === "strong");
       const italics = child.marks.some((m) => m.type.name === "em");
+      const mark = (name: string) => child.marks.find((m) => m.type.name === name);
+      const hex = (color: string) => color.replace("#", "").toUpperCase();
+      const color = mark("color")?.attrs.color as string | undefined;
+      const highlight = mark("highlight")?.attrs.color as string | undefined;
+      const scale = (mark("size")?.attrs.scale as number | undefined) ?? 1;
       out.push(
         new TextRun({
           text: child.text!,
@@ -221,6 +226,11 @@ export async function toDocx(doc: PMNode, options: DocxOptions): Promise<string>
           boldComplexScript: bold,
           italics,
           italicsComplexScript: italics,
+          ...(mark("underline") ? { underline: {} } : {}),
+          ...(mark("strike") ? { strike: true } : {}),
+          ...(color ? { color: hex(color) } : {}),
+          ...(highlight ? { shading: { fill: hex(highlight), color: "auto", type: ShadingType.CLEAR } } : {}),
+          ...(scale !== 1 ? { size: Math.round(24 * scale), sizeComplexScript: Math.round(28 * scale) } : {}),
           rightToLeft: ARABIC.test(child.text!),
         }),
       );
@@ -237,7 +247,13 @@ export async function toDocx(doc: PMNode, options: DocxOptions): Promise<string>
     return false;
   };
 
-  const ALIGN = { start: AlignmentType.START, center: AlignmentType.CENTER, end: AlignmentType.END, justify: AlignmentType.BOTH } as const;
+  const ALIGN = {
+    start: AlignmentType.START,
+    center: AlignmentType.CENTER,
+    end: AlignmentType.END,
+    justify: AlignmentType.BOTH,
+    kashida: AlignmentType.MEDIUM_KASHIDA, // Word stretches Arabic letters to justify
+  } as const;
   type Block = InstanceType<typeof Paragraph> | InstanceType<typeof Table>;
 
   /** Word blocks for a node's children: paragraphs, list items, page breaks and tables. */

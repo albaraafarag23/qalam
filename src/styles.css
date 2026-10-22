@@ -104,8 +104,8 @@ body { -webkit-user-select: none; user-select: none; }
 }
 .brand { font-weight: 500; letter-spacing: 0.02em; white-space: nowrap; flex-shrink: 0; }
 .brand-ar { color: var(--accent); margin-inline-start: 4px; }
-/* In a narrow window the toolbar needs the room (the Arabic tools are wide): just «قلم». */
-@media (max-width: 1180px) { .brand-en { display: none; } .brand-ar { margin-inline-start: 0; } }
+/* Below 1340px the toolbar needs the room (the Arabic tools are wide): just «قلم». */
+@media (max-width: 1340px) { .brand-en { display: none; } .brand-ar { margin-inline-start: 0; } }
 .tools { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; min-height: 36px; } /* as tall as the حركات buttons, so showing them doesn't move anything */
 .tools button {
   min-width: 34px;
@@ -363,6 +363,35 @@ button.primary, button.primary:hover { background: var(--accent); color: var(--p
 .doc-status:empty { display: none; }
 .doc-status.is-dirty::before { content: "• "; color: var(--accent); }
 @media (prefers-reduced-motion: reduce) { .menu { animation: none; } }
+
+/* ---- Text formatting menu, styles, Arabic tools menu ---- */
+.menu-label { padding: 6px 10px 2px; color: var(--ink-soft); font-size: 11px; }
+.swatches { display: flex; gap: 6px; padding: 4px 10px 6px; }
+.menu .swatches button {
+  width: 22px; height: 22px; min-width: 0; padding: 0; border-radius: 50%; border: 1px solid var(--rule);
+}
+.menu .swatches button.none { background: linear-gradient(135deg, transparent 45%, var(--misspelt) 45% 55%, transparent 55%), var(--paper); }
+.menu-h1 { font-size: 16px; font-weight: 600; }
+.menu-h2 { font-size: 14px; font-weight: 600; }
+.tools button.style-button { min-width: 74px; font-size: 13px; text-align: start; }
+.ProseMirror mark { color: #1b1a18; border-radius: 2px; padding: 0 1px; }
+.ProseMirror .long-sentence { background: color-mix(in srgb, #f2994a 22%, transparent); }
+
+/* إعراب, in the preview: the word, then its analysis */
+.preview-body table.i3rab { width: 100%; border-collapse: collapse; font-size: 16px; line-height: 1.8; }
+.preview-body table.i3rab td { padding: 4px 8px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+.preview-body td.i3rab-word { width: 22%; color: var(--accent); font-weight: 600; white-space: nowrap; }
+
+/* ---- Focus mode: only the page ---- */
+body.focus-mode .toolbar, body.focus-mode .status, body.focus-mode .outline { display: none; }
+body.focus-mode .desk { padding-top: 48px; }
+.focus-exit {
+  position: fixed; z-index: 30; top: 10px; inset-inline-end: 14px; padding: 4px 10px; border: 0; border-radius: 8px;
+  background: var(--glass); box-shadow: var(--glass-shadow); color: var(--ink-soft); font: inherit; font-size: 12px;
+  cursor: pointer; opacity: 0.35; transition: opacity 160ms var(--ease);
+}
+.focus-exit:hover { opacity: 1; }
+.focus-exit[hidden] { display: none; }
 
 /* ---- Outline ---- */
 .outline {

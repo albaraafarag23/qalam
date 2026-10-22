@@ -197,6 +197,30 @@ pub fn print_document(window: WebviewWindow) -> Result<(), String> {
     window.print().map_err(|e| e.to_string())
 }
 
+/// Reads text aloud with the system's speech service, on Linux, where the web engine has no
+/// voices (speech-dispatcher, usually with espeak-ng). Returns when it has finished.
+#[tauri::command]
+pub async fn speak(text: String, lang: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let status = std::process::Command::new("spd-say")
+            .args(["-w", "-l", &lang, "--", &text])
+            .status()
+            .map_err(|_| "Reading aloud needs the system's speech service (speech-dispatcher), which isn't installed.".to_string())?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err("The system's speech service couldn't read this.".into())
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub fn stop_speaking() {
+    let _ = std::process::Command::new("spd-say").arg("-C").status();
+}
+
 /// Closes the window for real, once the editor has dealt with unsaved changes.
 #[tauri::command]
 pub fn close_window(window: WebviewWindow) -> Result<(), String> {

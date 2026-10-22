@@ -10,12 +10,14 @@
     <header class="toolbar">
       <span class="brand"><span class="brand-en">Qalam </span><span class="brand-ar">قلم</span></span>
       <div class="tools">
-        <button data-cmd="h1" title="Heading (Ctrl+Alt+1)">H1</button>
-        <button data-cmd="h2" title="Subheading (Ctrl+Alt+2)">H2</button>
-        <button data-cmd="p" title="Body text (Ctrl+Alt+0)">¶</button>
+        <button id="style-button" class="style-button" title="Paragraph style: body text, heading, subheading" aria-haspopup="menu" aria-expanded="false"><span id="style-label">Text</span> ▾</button>
         <span class="sep"></span>
         <button data-cmd="bold" title="Bold (Ctrl+B)"><b>B</b></button>
         <button data-cmd="italic" title="Italic (Ctrl+I)"><i>I</i></button>
+        <button data-cmd="underline" title="Underline (Ctrl+U)"><u>U</u></button>
+        <button id="text-button" title="Text: strikethrough, colour, highlight, size · النص" aria-haspopup="menu" aria-expanded="false">
+          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M4.5 11L8 2.5 11.5 11M5.8 8h4.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><rect x="2.5" y="13" width="11" height="2" rx="1" fill="var(--accent)"/></svg>
+        </button>
         <span class="sep"></span>
         <button data-cmd="ul" title="Bulleted list">•</button>
         <button data-cmd="ol" title="Numbered list">1.</button>
@@ -41,12 +43,14 @@
             <option value="full">كامل</option>
             <option value="remove">إزالة</option>
           </select>
+          <button id="arabic-menu-button" class="word-tool" title="تصحيح الهمزات والتاء المربوطة والألف المقصورة، والإعراب" aria-haspopup="menu" aria-expanded="false">أدوات ▾</button>
         </div>
         <!-- Shown only while writing English. -->
         <div id="english-tools" class="arabic-tools english-tools" hidden>
           <span class="sep"></span>
           <button id="punctuate" class="word-tool" title="Add missing capitals and punctuation to this paragraph or the selection (works offline)">Punctuate</button>
           <button id="case-button" class="word-tool" title="Change case: Sentence case, Title Case, lowercase, UPPERCASE" aria-haspopup="menu">Aa ▾</button>
+          <button id="fix-spelling" class="word-tool" title="Correct every misspelt word in this paragraph (or the selection) with its first suggestion, after a preview">Fix spelling</button>
         </div>
       </div>
       <div class="toolbar-end">
@@ -119,11 +123,40 @@
       <button data-align="center" role="menuitem"><span>Centre · توسيط</span></button>
       <button data-align="end" role="menuitem"><span>Align to the end · محاذاة للنهاية</span></button>
       <button data-align="justify" role="menuitem"><span>Justify · ضبط</span></button>
+      <button data-align="kashida" role="menuitem"><span>Justify with kashida · ضبط بالتطويل</span></button>
       <hr />
       <button data-spacing="1" role="menuitem"><span>Line spacing 1 · تباعد ١</span></button>
       <button data-spacing="1.15" role="menuitem"><span>Line spacing 1.15</span></button>
       <button data-spacing="1.5" role="menuitem"><span>Line spacing 1.5</span></button>
       <button data-spacing="2" role="menuitem"><span>Line spacing 2 · تباعد ٢</span></button>
+    </div>
+
+    <div id="style-menu" class="menu" role="menu" hidden>
+      <button data-style="p" role="menuitem"><span>Text · نص</span><kbd>Ctrl+Alt+0</kbd></button>
+      <button data-style="h1" role="menuitem"><span class="menu-h1">Heading · عنوان</span><kbd>Ctrl+Alt+1</kbd></button>
+      <button data-style="h2" role="menuitem"><span class="menu-h2">Subheading · عنوان فرعي</span><kbd>Ctrl+Alt+2</kbd></button>
+    </div>
+
+    <div id="text-menu" class="menu" role="menu" hidden>
+      <button data-text="strike" role="menuitem"><span><s>Strikethrough</s> · يتوسطه خط</span></button>
+      <div class="menu-label">Colour · اللون</div>
+      <div class="swatches" id="text-colors"></div>
+      <div class="menu-label">Highlight · تظليل</div>
+      <div class="swatches" id="highlight-colors"></div>
+      <hr />
+      <button data-text="bigger" role="menuitem"><span>Bigger · أكبر</span><kbd>Ctrl+]</kbd></button>
+      <button data-text="smaller" role="menuitem"><span>Smaller · أصغر</span><kbd>Ctrl+[</kbd></button>
+      <hr />
+      <button data-text="clear" role="menuitem"><span>Clear formatting · إزالة التنسيق</span></button>
+    </div>
+
+    <div id="arabic-menu" class="menu" role="menu" hidden dir="rtl">
+      <button data-arabic="hamza" role="menuitem"><span>صحّح الهمزات (انا → أنا)</span></button>
+      <button data-arabic="endings" role="menuitem"><span>صحّح التاء المربوطة والألف المقصورة (مدرسه، الى)</span></button>
+      <button data-arabic="both" role="menuitem"><span>صحّح الاثنين</span></button>
+      <hr />
+      <button data-arabic="i3rab" role="menuitem"><span>✦ أعرب الجملة</span></button>
+      <p class="menu-note">التصحيح يعمل دون إنترنت ويظهر للمراجعة قبل تطبيقه. الإعراب يحتاج مفتاح Claude.</p>
     </div>
 
     <div id="case-menu" class="menu" role="menu" hidden>
@@ -220,6 +253,8 @@
       </div>
     </dialog>
 
+    <button id="focus-exit" class="focus-exit" hidden title="Leave focus mode (Esc)">✕ Focus</button>
+
     <!-- Asked before unsaved changes would be lost: closing, New, Open. -->
     <dialog id="unsaved" class="settings">
       <h2 id="unsaved-title">Save your changes?</h2>
@@ -236,8 +271,11 @@
       <span class="status-left">
         <span id="doc-status" class="doc-status"></span>
         <span id="words">0 words</span>
+        <button id="readability" class="status-toggle" title="How easy this paragraph is to read. Click to highlight sentences over 30 words." hidden></button>
         <button id="outline-toggle" class="status-toggle" title="Show the document's headings, to jump between them (Ctrl+Shift+O)">☰ Outline</button>
         <button id="spellcheck-toggle" class="status-toggle" title="Underlines misspelt Arabic and English words; click one for suggestions">Spellcheck: on</button>
+        <button id="read-aloud" class="status-toggle" title="Read the selection or this paragraph aloud (uses your system's voices)">▶ Read aloud</button>
+        <button id="focus-toggle" class="status-toggle" title="Hide everything but the page (Ctrl+Shift+F; Esc to come back)">Focus</button>
         <button id="auto-punct" class="status-toggle" title="Adds missing capitals and punctuation to an English paragraph when you press Enter at its end">Auto-punctuation: on</button>
       </span>
       <span id="dir"></span>

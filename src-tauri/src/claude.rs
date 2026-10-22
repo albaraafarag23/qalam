@@ -301,6 +301,50 @@ pub async fn synonyms(word: String, sentence: String) -> Result<Vec<String>, Str
     Ok(reply.synonyms.into_iter().filter(|s| !s.trim().is_empty() && s.trim() != word.trim()).take(8).collect())
 }
 
+// ---- إعراب ----
+// The grammatical analysis of an Arabic sentence, word by word, the way it's taught in school:
+// «الطالبُ: مبتدأ مرفوع وعلامة رفعه الضمة الظاهرة على آخره».
+
+#[derive(Deserialize, serde::Serialize)]
+pub struct ParsedWord {
+    word: String,
+    i3rab: String,
+}
+
+#[derive(Deserialize)]
+struct I3rabReply {
+    words: Vec<ParsedWord>,
+}
+
+#[tauri::command]
+pub async fn i3rab(sentence: String) -> Result<Vec<ParsedWord>, String> {
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "words": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": { "word": { "type": "string" }, "i3rab": { "type": "string" } },
+                    "required": ["word", "i3rab"],
+                    "additionalProperties": false
+                }
+            }
+        },
+        "required": ["words"],
+        "additionalProperties": false
+    });
+    let system = "أنت أستاذ في النحو العربي. أعرب الجملة كلمةً كلمة على طريقة كتب الإعراب المدرسية: \
+                  نوع الكلمة وموقعها الإعرابي وحكمها (مرفوع، منصوب، مجرور، مجزوم، مبني) وعلامة إعرابها \
+                  وسببها، في جملة قصيرة واضحة لكل كلمة. اكتب كل كلمة كما وردت في الجملة مع ضبطها بالشكل \
+                  الصحيح في حقل word. أعرب الحروف المتصلة (مثل واو العطف وباء الجر وأل) مع الكلمة التي \
+                  تتصل بها. إن احتملت الكلمة أكثر من إعراب فاذكر الأرجح ثم الوجه الآخر باختصار. \
+                  إن كان في الجملة خطأ نحوي فأعربها على الصواب ونبّه على الخطأ في إعراب الكلمة نفسها.";
+    let text = ask(system.to_string(), format!("الجملة: {sentence}"), schema, "high").await?;
+    let reply: I3rabReply = serde_json::from_str(&text).map_err(|e| format!("Unexpected reply format: {e}"))?;
+    Ok(reply.words)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

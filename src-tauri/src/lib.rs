@@ -2,6 +2,7 @@ mod arabic_rules;
 mod claude;
 mod documents;
 mod grammar;
+mod letters;
 mod memory;
 mod offline;
 mod punctuate;
@@ -61,6 +62,8 @@ pub fn run() {
             documents::clear_backup,
             documents::close_window,
             documents::print_document,
+            documents::speak,
+            documents::stop_speaking,
             claude::set_api_key,
             claude::has_api_key,
             claude::clear_api_key,
@@ -68,6 +71,7 @@ pub fn run() {
             claude::deep_check,
             claude::transform,
             claude::synonyms,
+            claude::i3rab,
             memory::load_tashkeel_memory,
             memory::save_tashkeel_memory,
             offline::offline_model_installed,
@@ -77,6 +81,7 @@ pub fn run() {
             punctuate::install_punctuation_model,
             punctuate::punctuate_offline,
             spell::spell_check,
+            spell::fix_letters,
             spell::spell_suggest,
             spell::spell_add_word,
         ])

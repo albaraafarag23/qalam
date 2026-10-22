@@ -29,6 +29,8 @@ pub struct Checker {
     arabic: Dictionary,
     /// For the Arabic grammar rules: words in ون listed as dictionary entries of their own.
     arabic_listed: std::collections::HashSet<String>,
+    /// How common each Arabic word is, for choosing between spellings (letters.rs).
+    arabic_frequency: HashMap<String, u32>,
     american: Dictionary,
     british: Dictionary,
     grammar: Grammar,
@@ -176,6 +178,7 @@ impl Checker {
         let arabic_dic = read("ar.dic")?;
         let arabic = Dictionary::new(&read("ar.aff")?, &arabic_dic).map_err(|e| format!("Arabic dictionary: {e}"))?;
         let arabic_listed = crate::arabic_rules::listed_on_words(&arabic_dic);
+        let arabic_frequency = crate::letters::load_frequency(&read("ar-frequency.txt")?);
         let american = Dictionary::new(&read("en_US.aff")?, &read("en_US.dic")?).map_err(|e| format!("American English dictionary: {e}"))?;
         let british = Dictionary::new(&read("en_GB.aff")?, &read("en_GB.dic")?).map_err(|e| format!("British English dictionary: {e}"))?;
         let mut grammar = Grammar::new(&read("en-learner.txt")?);
@@ -189,7 +192,7 @@ impl Checker {
                 Some((strip_marks(wrong.trim()), (right.trim().to_string(), why.trim().to_string())))
             })
             .collect();
-        let mut checker = Checker { arabic, arabic_listed, american, british, grammar, mistakes, personal };
+        let mut checker = Checker { arabic, arabic_listed, arabic_frequency, american, british, grammar, mistakes, personal };
         if let Ok(words) = std::fs::read_to_string(&checker.personal) {
             for word in words.lines().map(str::trim).filter(|w| !w.is_empty()) {
                 checker.learn(word);
@@ -394,6 +397,35 @@ pub fn preload(app: &AppHandle) {
             eprintln!("spellcheck: {e}");
         }
     });
+}
+
+/// Proposed letter fixes for one paragraph ("Fix hamzas", "ة/ه · ى/ي"), as UTF-16 offsets.
+#[derive(Serialize)]
+pub struct LetterFixesUtf16 {
+    fixes: Vec<(usize, usize, String)>,
+    unsure: usize,
+}
+
+#[tauri::command]
+pub async fn fix_letters(app: AppHandle, paragraph: String, hamza: bool, endings: bool) -> Result<LetterFixesUtf16, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        with_checker(&app, |c| {
+            let result = crate::letters::fix(&paragraph, &c.arabic, &c.arabic_frequency, hamza, endings);
+            let mut utf16 = Vec::with_capacity(paragraph.len() + 1);
+            let mut at = 0;
+            for ch in paragraph.chars() {
+                utf16.push(at);
+                at += ch.len_utf16();
+            }
+            utf16.push(at);
+            LetterFixesUtf16 {
+                fixes: result.fixes.into_iter().map(|f| (utf16[f.from], utf16[f.to], f.replacement)).collect(),
+                unsure: result.unsure,
+            }
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Spelling and grammar problems in each paragraph.

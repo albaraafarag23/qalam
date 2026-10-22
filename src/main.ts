@@ -19,14 +19,15 @@ import { history, undo, redo, closeHistory } from "prosemirror-history";
 import { keymap } from "prosemirror-keymap";
 import { InputRule, inputRules, undoInputRule, wrappingInputRule, textblockTypeInputRule } from "prosemirror-inputrules";
 import { splitListItem, liftListItem, sinkListItem, wrapInList } from "prosemirror-schema-list";
-import { schema } from "./editor/schema";
+import { HIGHLIGHT_COLORS, TEXT_COLORS, TEXT_SIZES, schema } from "./editor/schema";
+import { longSentences, longSentencesOn, readability, showLongSentences } from "./editor/readability";
 import { blockDirection, directionAt, textDirection } from "./editor/direction";
 import { softCaret } from "./editor/caret";
 import { HARAKAT, activeHarakat, clearHarakat, setHaraka } from "./editor/harakat";
 import { applyResults, previewHtml, targets, type Target } from "./editor/tashkeel";
 import { applyMemory, emptyMemory, learn, recordApplied, type TashkeelMemory } from "./editor/memory";
 import { edits as punctuationEdits, isEnglish, modelInput, words as splitWords } from "./editor/punctuation";
-import { blocksIn, ignoreUnderline, setSpellcheck, showClaudeSuggestions, spellcheck, spellcheckEnabled, underlineAt, type Issue, type Underline } from "./editor/spellcheck";
+import { blocksIn, underlinesIn, ignoreUnderline, setSpellcheck, showClaudeSuggestions, spellcheck, spellcheckEnabled, underlineAt, type Issue, type Underline } from "./editor/spellcheck";
 import { displayName, fromDocx, fromQalam, fromText, toDocx, toQalam, toText, type FileKind } from "./editor/files";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -40,6 +41,7 @@ const commands: Record<string, Command> = {
   p: setBlockType(nodes.paragraph),
   bold: toggleMark(marks.strong),
   italic: toggleMark(marks.em),
+  underline: toggleMark(marks.underline),
   ul: wrapInList(nodes.bullet_list),
   ol: wrapInList(nodes.ordered_list),
 };
@@ -121,6 +123,7 @@ const state = EditorState.create({
     keymap({ Tab: goToNextCell(1), "Shift-Tab": goToNextCell(-1), "Mod-Enter": insertPageBreak }),
     tableEditing(),
     findPlugin,
+    longSentences,
     blockDirection,
     softCaret,
     spellcheck({ check: (paragraphs) => invoke<Issue[][]>("spell_check", { paragraphs, english: englishVariant }) }),
@@ -132,6 +135,10 @@ const state = EditorState.create({
       "Mod-Shift-z": redo,
       "Mod-b": commands.bold,
       "Mod-i": commands.italic,
+      "Mod-u": commands.underline,
+      "Mod-]": () => (changeSize(1), true),
+      "Mod-[": () => (changeSize(-1), true),
+      "Mod-Shift-f": () => (setFocusMode(true), true),
       "Mod-Alt-1": commands.h1,
       "Mod-Alt-2": commands.h2,
       "Mod-Alt-0": commands.p,
@@ -246,6 +253,8 @@ document.querySelectorAll<HTMLButtonElement>("[data-cmd]").forEach((btn) => {
 });
 
 function updateStatus() {
+  updateStyleLabel();
+  updateReadability();
   const text = view.state.doc.textContent.trim();
   const words = text ? text.split(/\s+/).length : 0;
   document.getElementById("words")!.textContent = `${words} ${words === 1 ? "word" : "words"}`;
@@ -508,10 +517,17 @@ function closePreview() {
   preview.hidden = true;
   pending = null;
   pendingTransform = null;
+  pendingAction = null;
   view.focus();
 }
 
 $("preview-accept").addEventListener("click", () => {
+  if (pendingAction) {
+    const action = pendingAction;
+    pendingAction = null;
+    if (action()) closePreview();
+    return;
+  }
   if (pendingTransform) {
     if (acceptTransform()) closePreview();
     return;
@@ -945,6 +961,268 @@ function outlineChanged() {
   clearTimeout(outlineTimer);
   outlineTimer = window.setTimeout(renderOutline, 300);
 }
+
+// ---- Paragraph style (the menu that replaced H1 H2 ¶) ----
+function updateStyleLabel() {
+  const parent = view.state.selection.$from.parent;
+  const label = parent.type.name === "heading" ? (parent.attrs.level === 1 ? "Heading" : "Subheading") : "Text";
+  const el = document.getElementById("style-label");
+  if (el && el.textContent !== label) el.textContent = label;
+}
+menuButton($("style-button"), $("style-menu"), (item) => run(commands[item.dataset.style!]));
+
+// ---- Text: strikethrough, colour, highlight, size, clear ----
+function applyMark(type: (typeof marks)[keyof typeof marks], attrs?: Record<string, unknown>) {
+  const { from, to, empty } = view.state.selection;
+  if (empty) return; // these apply to a selection
+  let tr = view.state.tr.removeMark(from, to, type);
+  if (attrs) tr = tr.addMark(from, to, type.create(attrs));
+  view.dispatch(tr);
+  view.focus();
+}
+function changeSize(step: 1 | -1) {
+  const { from, to, empty, $from } = view.state.selection;
+  if (empty) return;
+  const current = (marks.size.isInSet($from.marks()) ?? marks.size.isInSet(view.state.doc.nodeAt(from)?.marks ?? []))?.attrs.scale ?? 1;
+  const i = TEXT_SIZES.indexOf(current);
+  const next = TEXT_SIZES[Math.min(TEXT_SIZES.length - 1, Math.max(0, (i < 0 ? 1 : i) + step))];
+  applyMark(marks.size, next === 1 ? undefined : { scale: next });
+  void to;
+}
+function swatches(boxId: string, colors: string[], type: typeof marks.color) {
+  const box = $(boxId);
+  const none = document.createElement("button");
+  none.className = "none";
+  none.title = "None · بلا";
+  none.dataset.swatch = "";
+  box.appendChild(none);
+  for (const c of colors) {
+    const b = document.createElement("button");
+    b.style.background = c;
+    b.title = c;
+    b.dataset.swatch = c;
+    box.appendChild(b);
+  }
+  box.addEventListener("mousedown", (e) => e.preventDefault());
+  box.addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-swatch]");
+    if (!b) return;
+    closeMenu($("text-menu"));
+    applyMark(type, b.dataset.swatch ? { color: b.dataset.swatch } : undefined);
+  });
+}
+swatches("text-colors", TEXT_COLORS, marks.color);
+swatches("highlight-colors", HIGHLIGHT_COLORS, marks.highlight);
+menuButton($("text-button"), $("text-menu"), (item) => {
+  const action = item.dataset.text;
+  if (action === "strike") run(toggleMark(marks.strike));
+  else if (action === "bigger") changeSize(1);
+  else if (action === "smaller") changeSize(-1);
+  else if (action === "clear") {
+    const { from, to } = view.state.selection;
+    let tr = view.state.tr;
+    for (const m of Object.values(marks)) tr = tr.removeMark(from, to, m);
+    view.dispatch(tr);
+    view.focus();
+  }
+});
+
+// ---- Changes shown in the preview before they're applied (letters, spelling) ----
+let pendingAction: (() => boolean) | null = null;
+interface BlockChanges { pos: number; text: string; changes: { from: number; to: number; text: string }[] }
+
+const escapeHtml = (t: string) => t.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+
+/** Shows each paragraph with its changes highlighted; Accept applies them all as one step. */
+function showChanges(title: string, note: string, blocks: BlockChanges[]) {
+  const withChanges = blocks.filter((b) => b.changes.length);
+  showNote(title);
+  $("preview-note").textContent = note;
+  const body = $("preview-body");
+  body.innerHTML = withChanges
+    .map((b) => {
+      let html = "";
+      let at = 0;
+      for (const c of b.changes) {
+        html += escapeHtml(b.text.slice(at, c.from)) + `<span class="changed">${escapeHtml(c.text)}</span>`;
+        at = c.to;
+      }
+      return `<p dir="auto">${html + escapeHtml(b.text.slice(at))}</p>`;
+    })
+    .join("");
+  const doc = view.state.doc;
+  pendingAction = () => {
+    if (!doc.eq(view.state.doc)) {
+      showNote("The text changed meanwhile. Ask again.");
+      return false;
+    }
+    const tr = view.state.tr;
+    for (const b of [...withChanges].reverse()) {
+      for (const c of [...b.changes].reverse()) {
+        const from = b.pos + 1 + c.from;
+        tr.insertText(c.text, from, b.pos + 1 + c.to);
+      }
+    }
+    view.dispatch(tr.scrollIntoView());
+    return true;
+  };
+  $<HTMLButtonElement>("preview-accept").hidden = !withChanges.length;
+}
+
+// ---- Arabic tools: fix hamzas and endings (offline), إعراب (Claude) ----
+async function fixLetters(hamza: boolean, endings: boolean) {
+  const blocks = targetBlocks().filter((b) => /[\u0600-\u06FF]/.test(b.text));
+  if (!blocks.length) return showDocState("لا يوجد نص عربي هنا · No Arabic text here");
+  let unsure = 0;
+  const results: BlockChanges[] = [];
+  for (const b of blocks) {
+    const r = await invoke<{ fixes: [number, number, string][]; unsure: number }>("fix_letters", { paragraph: b.text, hamza, endings });
+    unsure += r.unsure;
+    results.push({ ...b, changes: r.fixes.map(([from, to, text]) => ({ from, to, text })) });
+  }
+  const n = results.reduce((sum, b) => sum + b.changes.length, 0);
+  const title = n ? `التصحيحات المقترحة (${n})` : "لا شيء يحتاج إلى تصحيح هنا · Nothing to fix here";
+  const note = unsure ? `${unsure} ${unsure === 1 ? "كلمة تُركت" : "كلمات تُركت"} كما هي: تحتمل أكثر من صواب (مثل ان: أن أو إن)` : "تُصحَّح الكلمة فقط حين يكون صوابها واضحًا";
+  showChanges(title, note, results);
+}
+
+/** The sentence at the cursor (or the selection), for إعراب. */
+function sentenceAtCursor(): string {
+  const { from, to, empty, $from } = view.state.selection;
+  if (!empty) return view.state.doc.textBetween(from, to, " ");
+  const text = $from.parent.textContent;
+  const ends = /[.!؟?؛\n]/;
+  // Right after a full stop the cursor belongs to the sentence that just ended.
+  let at = $from.parentOffset;
+  while (at > 0 && /[\s.!؟?؛]/.test(text[at - 1])) at--;
+  let start = at;
+  while (start > 0 && !ends.test(text[start - 1])) start--;
+  let end = at;
+  while (end < text.length && !ends.test(text[end])) end++;
+  return text.slice(start, end + 1).trim();
+}
+
+async function runI3rab() {
+  const sentence = sentenceAtCursor();
+  if (!sentence || !/[\u0600-\u06FF]/.test(sentence)) return showDocState("ضع المؤشر في جملة عربية · Put the cursor in an Arabic sentence");
+  if (sentence.split(/\s+/).length > 60) return showDocState("الجملة طويلة؛ حدّد جزءًا منها · Select a shorter part");
+  showDocState("جارٍ الإعراب… · Parsing with Claude…");
+  try {
+    const words = await invoke<{ word: string; i3rab: string }[]>("i3rab", { sentence });
+    showNote("الإعراب ✦");
+    $("preview-note").textContent = sentence;
+    $("preview-body").innerHTML = `<table class="i3rab">${words
+      .map((w) => `<tr><td class="i3rab-word">${escapeHtml(w.word)}</td><td>${escapeHtml(w.i3rab)}</td></tr>`)
+      .join("")}</table>`;
+    showDocState();
+  } catch (e) {
+    claudeError(e);
+  }
+}
+
+menuButton($("arabic-menu-button"), $("arabic-menu"), (item) => {
+  const action = item.dataset.arabic;
+  if (action === "hamza") fixLetters(true, false);
+  else if (action === "endings") fixLetters(false, true);
+  else if (action === "both") fixLetters(true, true);
+  else if (action === "i3rab") runI3rab();
+});
+
+// ---- Fix spelling: every misspelt word in the paragraph, with its first suggestion ----
+$("fix-spelling").addEventListener("mousedown", (e) => e.preventDefault());
+$("fix-spelling").addEventListener("click", async () => {
+  const blocks = targetBlocks();
+  const results: BlockChanges[] = [];
+  for (const b of blocks) {
+    const node = view.state.doc.nodeAt(b.pos)!;
+    const misspelt = underlinesIn(view.state, b.pos + 1, b.pos + node.nodeSize - 1).filter((u) => u.kind === "spelling");
+    const changes: BlockChanges["changes"] = [];
+    for (const u of misspelt) {
+      const s = await invoke<SpellSuggestions>("spell_suggest", { word: u.text, english: englishVariant }).catch(() => null);
+      if (s?.words[0]) changes.push({ from: u.from - b.pos - 1, to: u.to - b.pos - 1, text: s.words[0] });
+    }
+    results.push({ ...b, changes: changes.sort((x, y) => x.from - y.from) });
+  }
+  const n = results.reduce((sum, b) => sum + b.changes.length, 0);
+  showChanges(n ? `Spelling fixes (${n})` : "No misspelt words here", "Each misspelt word gets its first suggestion. Check them before accepting.", results);
+});
+
+// ---- Readability (status bar): grade level for English, sentence length for Arabic ----
+const readabilityButton = $<HTMLButtonElement>("readability");
+let readabilityTimer: number | undefined;
+function updateReadability() {
+  clearTimeout(readabilityTimer);
+  readabilityTimer = window.setTimeout(() => {
+    const r = readability(view.state.selection.$from.parent.textContent);
+    readabilityButton.hidden = !r;
+    if (!r) return;
+    const mark = longSentencesOn(view.state) ? " ●" : "";
+    readabilityButton.textContent = r.language === "en" ? `Grade ${r.value} · ${r.label}${mark}` : `${r.value} كلمة للجملة · ${r.label}${mark}`;
+  }, 250);
+}
+readabilityButton.addEventListener("click", () => {
+  view.dispatch(showLongSentences(view.state.tr, !longSentencesOn(view.state)));
+  updateReadability();
+  view.focus();
+});
+
+// ---- Focus mode ----
+function setFocusMode(on: boolean) {
+  document.body.classList.toggle("focus-mode", on);
+  $("focus-exit").hidden = !on;
+  view.focus();
+}
+$("focus-toggle").addEventListener("click", () => setFocusMode(true));
+$("focus-exit").addEventListener("click", () => setFocusMode(false));
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && document.body.classList.contains("focus-mode") && !openMenus.size && spellCard.hidden && preview.hidden) setFocusMode(false);
+});
+
+// ---- Read aloud (the system's voices) ----
+const readButton = $<HTMLButtonElement>("read-aloud");
+readButton.addEventListener("mousedown", (e) => e.preventDefault());
+let systemSpeaking = false;
+readButton.addEventListener("click", async () => {
+  const speech = window.speechSynthesis;
+  if (!speech) {
+    // Linux's web engine has no voices of its own: the system's speech service reads instead.
+    if (systemSpeaking) {
+      invoke("stop_speaking").catch(() => {});
+      return;
+    }
+    const { from, to, empty, $from } = view.state.selection;
+    const text = empty ? $from.parent.textContent : view.state.doc.textBetween(from, to, "\n");
+    if (!text.trim()) return;
+    systemSpeaking = true;
+    readButton.textContent = "■ Stop";
+    try {
+      await invoke("speak", { text, lang: textDirection(text) === "rtl" ? "ar" : "en" });
+    } catch (e) {
+      showDocState(String(e).replace(/^Error: /, ""));
+    } finally {
+      systemSpeaking = false;
+      readButton.textContent = "▶ Read aloud";
+    }
+    return;
+  }
+  if (speech.speaking) {
+    speech.cancel();
+    readButton.textContent = "▶ Read aloud";
+    return;
+  }
+  const { from, to, empty, $from } = view.state.selection;
+  const text = empty ? $from.parent.textContent : view.state.doc.textBetween(from, to, "\n");
+  if (!text.trim()) return;
+  const arabic = textDirection(text) === "rtl";
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = arabic ? "ar" : englishVariant === "gb" ? "en-GB" : "en-US";
+  const voice = speech.getVoices().find((v) => v.lang.toLowerCase().startsWith(arabic ? "ar" : "en"));
+  if (voice) utterance.voice = voice;
+  else if (arabic) showDocState("No Arabic voice is installed; the system's default voice is used");
+  utterance.onend = utterance.onerror = () => (readButton.textContent = "▶ Read aloud");
+  readButton.textContent = "■ Stop";
+  speech.speak(utterance);
+});
 
 // ---- Insert and Paragraph menus ----
 const run = (command: Command) => {

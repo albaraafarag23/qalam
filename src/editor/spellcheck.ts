@@ -295,6 +295,12 @@ export function underlineAt(state: EditorState, pos: number): Underline | null {
   return found ? { ...(found.spec as Underline), from: found.from, to: found.to } : null;
 }
 
+/** Every underline between two positions, in order. */
+export function underlinesIn(state: EditorState, from: number, to: number): Underline[] {
+  const found = spellcheckKey.getState(state)?.decorations.find(from, to) ?? [];
+  return found.map((d) => ({ ...(d.spec as Underline), from: d.from, to: d.to })).sort((a, b) => a.from - b.from);
+}
+
 export const spellcheckEnabled = (state: EditorState) => spellcheckKey.getState(state)?.enabled ?? false;
 export const setSpellcheck = (tr: Transaction, on: boolean) => tr.setMeta(spellcheckKey, { type: "enable", on } satisfies Meta);
 /** Positions and texts of the textblocks a range covers, for sending to a checker. */
