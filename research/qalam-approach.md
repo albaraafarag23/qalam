@@ -63,7 +63,8 @@ behind, and says what Qalam does instead. ✅ = built (on the `spellcheck` branc
 ## Next (⏳)
 - ✅ **Arabic grammar, first rules** ([arabic-rules.md](arabic-rules.md)): لم/لن + يفعلون, plurals after إنّ and prepositions,
   قال إنّ, سوف لن, repeated words, Arabic punctuation spacing, إن شاء الله, هذه before feminine nouns. Each fix is explained in
-  Arabic. **0 false alarms in 128,324 words** of clean Arabic, against LanguageTool's one every 16 words.
+  Arabic. Three rounds so far, now including كان, numbers, ذو/أبو and Arabic typography. **0 false alarms in 141,293 words**
+  of clean Arabic (Wikipedia and Wikinews), against LanguageTool's one every 16 words.
 - ⏳ **Deeper Arabic grammar** (agreement, كان, numbers): more gated rules, and Claude as an opt-in deep check.
 - ⏳ **Rules for Arabic speakers writing English**, growing `en-learner.txt` (LanguageTool has the same idea for German speakers).
 - ⏳ **Dialect words** (عامية) shown as a gentle, optional suggestion, never as a mistake.

@@ -8,9 +8,13 @@ Qalam writes its own rules and holds each one to a gate.
 
 A rule ships only if:
 1. it catches its mistakes in the test sentences, and
-2. on **128,324 words of clean Arabic Wikipedia** (a 31,828-word set used while writing the rules, plus a 96,496-word set
-   from 20 other articles the rules had never seen) **every flag is a real mistake**. Wikipedia has a few of its own (24
-   found, each checked by hand and listed in the test); anything else fails the test.
+2. on **141,293 words of clean Arabic** **every flag is a real mistake**. The words come from three texts:
+   - 31,828 words of Wikipedia used while writing the rules
+   - 96,496 words from 20 Wikipedia articles the rules had never seen
+   - 12,969 words of news from 60 random Arabic Wikinews articles, a less formal style
+
+   These texts have real mistakes of their own. 90 have been found so far, each checked by hand and listed in
+   `src-tauri/tests/arabic-reviewed.tsv`. Any other flag fails the test.
 
 Run it: `QALAM_TEST_ARABIC_CORPUS=<text file> cargo test --release clean_corpus -- --nocapture`. The corpus isn't in the repo
 (Wikipedia text is CC BY-SA). It's kept in `~/rea-targets/lt/test/`.
@@ -32,6 +36,11 @@ Run it: `QALAM_TEST_ARABIC_CORPUS=<text file> cargo test --release clean_corpus 
 | كان and its sisters + a predicate without its alif *(round 2)* | كان الجو جميل. · أصبح الطالب مجتهد في دروسه | جميلًا · مجتهدًا | 37 positions judged (29 without alif, all rightly left alone; 8 correct with alif) |
 | A detached و *(round 2)* | الخبز و الحليب | والحليب | n/a (found 5 real ones in Wikipedia) |
 | Run-together phrases *(round 2, in the mistakes list)* | الحمدلله · انشالله · ماشاءالله · بإذنالله | الحمد لله · إن شاء الله · ما شاء الله · بإذن الله | n/a |
+| Number 3–10 with ة before a feminine plural *(round 3)* | أربعة سنوات · خمسة جامعات | أربع · خمس | 13 "number with ة + ات" in the clean text: the masculine ones (اتحادات، مجلدات، مستشفيات) left alone; 6 real mistakes found |
+| ذو / أبو in the wrong case *(round 3)* | سلاحا ذو حدين · على أبو محمد · من ذو الخبرة | ذا · أبي · ذي | the 4 correct «إلى أبي…» and «وابنهما ذو» left alone |
+| Spaces inside brackets *(round 3)* | ( الجديد ) · « نص » | (الجديد) · «نص» | maths brackets left alone; 9 real ones found |
+| No space after a full stop *(round 3)* | الدرس.بدأ | الدرس. بدأ | «فهرس.نت» and «ق.م» left alone; 12 real ones found |
+| More run-together words *(round 3, mistakes list)* | الخ · مايلي · لايزال · لازال | إلخ · ما يلي · لا يزال · ما زال | n/a |
 
 Each fix comes with a short explanation in Arabic, written for Qalam.
 
@@ -53,13 +62,22 @@ Each fix comes with a short explanation in Arabic, written for Qalam.
   كذلك) or a preposition with a pronoun (لهم: «لهما» is a word, but the wrong one). The fix must be a dictionary word. ظل is
   left out because it's also a noun («في ظل الخلافة»). It misses «كان الجو جميل اليوم» on purpose, because «اليوم» can start a possessive.
 - **Detached و:** only before a word of 2+ letters (not «و ز» or «و (2)» in maths and lists).
+- **Numbers:** many masculine nouns have plurals in ات (اجتماعات، مجلدات، تعريفات، مستشفيات), and the dictionary can't tell
+  gender: nearly every masculine form is a word too (جامع، دوري، شرك). So the rule only knows a list of 44 common plurals
+  whose singular is clearly feminine (سنوات، ساعات، سيارات، شركات، جامعات، ولايات…), and only checks a number *with* ة before
+  one. The opposite mistake (ثلاث طلاب) needs the gender of a broken plural's singular, which isn't available yet.
+- **ذو / أبو:** after a separate preposition they're genitive (أبي، ذي). After a word ending in ا, ذو is accusative (ذا), but
+  not after a pronoun ending (ابنهما، بيتها، كتابنا), and not with ال. «أبو ظبي» is a place name and is left alone.
+- **Full stop:** only between two Arabic words, not after a one-letter abbreviation (د. ق.م), not before a web ending
+  (نت، كوم).
+- **Mistakes list:** only clear-cut cases. Widely accepted joined forms (مازال، لابد، مادام، لاسيما) are left alone.
 
 ## Results vs LanguageTool
 
 | | LanguageTool 6.6 | Qalam (spelling + these rules) |
 | --- | --- | --- |
-| 30 mistake sentences | 14 right (about 10 for the right reason) | 15 right (with هذا، all for the right reason) |
-| False alarms on clean Arabic | ~1 every 16 words | **0 in 128,324 words** |
+| 30 mistake sentences | 14 right (about 10 for the right reason) | **18 right** after round 3, all for the right reason |
+| False alarms on clean Arabic | ~1 every 16 words | **0 in 141,293 words** |
 | Memory | 618 MB | a few MB, inside Qalam |
 | Speed | ~70 ms per sentence | microseconds |
 
@@ -73,7 +91,6 @@ objects (رأيت المهندسون), الذي/التي. They're the job for th
   preposition. No guard tells these apart without real grammatical analysis, so this is left to the Claude check.
 
 ## Next rules worth trying (each through the same gate)
-- **Numbers 3–10 with a plural noun** (ثلاث طلاب → ثلاثة). Needs each noun's singular and its grammatical gender, which the
-  dictionary doesn't record. That means a small gender list first.
-- **A more formal test text.** Wikipedia rarely contains the informal mistakes these rules target. A clean corpus of
-  newspaper or blog Arabic would test the كان and و rules harder.
+- **Numbers, the other direction** (ثلاث طلاب → ثلاثة): needs a list of broken plurals with their singular's gender.
+- **Still missed in the test sentences:** agreement (الطلاب ذهب، البنات يلعبون، البنت الجميل، الطالبان يدرسون), objects (رأيت
+  المهندسون), الذي/التي, «كان الجو جميل اليوم». They need real grammatical analysis, i.e. the opt-in Claude check.

@@ -339,6 +339,109 @@ fn detached_waw(chars: &[char], ws: &[Word], out: &mut Vec<Problem>) {
     }
 }
 
+/// Numbers 3–10 take the opposite gender to the noun's singular: ثلاث سيارات (سيارة is feminine),
+/// ثلاثة كتب. Only the case Qalam can be sure of is checked: a number ending in ة before a common
+/// plural whose singular is feminine (أربعة سنوات → أربع سنوات). Many masculine nouns also have
+/// plurals in ات (اجتماعات، مجلدات، مستشفيات), so the plurals are a list, not a pattern.
+fn number_gender(chars: &[char], ws: &[Word], out: &mut Vec<Problem>) {
+    const NUMBERS: [(&str, &str); 8] = [
+        ("ثلاثة", "ثلاث"), ("أربعة", "أربع"), ("خمسة", "خمس"), ("ستة", "ست"),
+        ("سبعة", "سبع"), ("ثمانية", "ثماني"), ("تسعة", "تسع"), ("عشرة", "عشر"),
+    ];
+    const FEMININE_PLURALS: [&str; 44] = [
+        "سنوات", "ساعات", "مرات", "سيارات", "شركات", "جامعات", "ولايات", "كلمات", "صفحات", "لغات", "دورات", "مباريات",
+        "محاولات", "حالات", "طائرات", "دراسات", "مقالات", "روايات", "شخصيات", "مؤسسات", "منظمات", "جمعيات", "مسابقات",
+        "بطولات", "عمليات", "فترات", "خطوات", "حلقات", "طبعات", "مقاطعات", "محافظات", "بلديات", "مجموعات", "فئات",
+        "طبقات", "إجابات", "دقات", "قصائد", "رحلات", "زيارات", "سفارات", "وزارات", "مدارس", "دوريات",
+    ];
+    for pair in ws.windows(2) {
+        let (number, noun) = (&pair[0], &pair[1]);
+        let (prefix, bare) = match number.bare.strip_prefix('و').or_else(|| number.bare.strip_prefix('ب')).or_else(|| number.bare.strip_prefix('ل')) {
+            Some(rest) if NUMBERS.iter().any(|(n, _)| *n == rest) => (&number.bare[..number.bare.len() - rest.len()], rest),
+            _ => ("", number.bare.as_str()),
+        };
+        let Some((_, plain)) = NUMBERS.iter().find(|(n, _)| *n == bare) else { continue };
+        if adjacent(chars, number, noun) && FEMININE_PLURALS.contains(&noun.bare.as_str()) {
+            out.push(problem(
+                number.from,
+                number.to,
+                format!("{prefix}{plain}"),
+                "العدد من ثلاثة إلى عشرة يخالف المعدود في التذكير والتأنيث؛ ومفرد هذا المعدود مؤنث، فيُذكَّر العدد: «ثلاث سنوات».",
+            ));
+        }
+    }
+}
+
+/// ذو and أبو change with the case: ذا / أبا after an accusative, ذي / أبي after a preposition.
+/// Checked where the case is visible: «سلاحا ذو حدين» (an accusative noun ending in ا) → ذا, and
+/// «على أبو محمد» / «على رجل ذو علم» (a separate preposition) → أبي / ذي. Pronoun endings that
+/// end in ا (ابنهما، بيتها، كتابنا) aren't accusatives, and «أبو ظبي» is a place name.
+fn five_nouns(chars: &[char], ws: &[Word], out: &mut Vec<Problem>) {
+    const PREPOSITIONS: [&str; 9] = ["في", "على", "إلى", "عن", "مع", "من", "حتى", "عند", "لدى"];
+    for (i, w) in ws.iter().enumerate() {
+        if w.bare != "ذو" && w.bare != "أبو" {
+            continue;
+        }
+        let Some(prev) = i.checked_sub(1).map(|j| &ws[j]) else { continue };
+        if !adjacent(chars, prev, w) || ws.get(i + 1).is_some_and(|n| n.bare == "ظبي") {
+            continue;
+        }
+        let stem = &w.bare[..w.bare.len() - 'و'.len_utf8()];
+        // A separate preposition right before: genitive.
+        if PREPOSITIONS.contains(&prev.bare.as_str()) {
+            out.push(problem(w.from, w.to, format!("{stem}ي"), "بعد حرف الجر تأتي «أبي» و«ذي» مجرورتين بالياء: «على أبي محمد»."));
+            continue;
+        }
+        // «ذو» after an indefinite accusative noun (…ًا) that it describes: «سلاحًا ذا حدين».
+        let accusative = prev.bare.ends_with('ا')
+            && prev.bare.chars().count() >= 4
+            && !["ها", "نا", "هما", "كما"].iter().any(|p| prev.bare.ends_with(p))
+            && !prev.bare.starts_with("ال");
+        if w.bare == "ذو" && accusative {
+            out.push(problem(w.from, w.to, "ذا", "«ذو» تتبع ما قبلها في الإعراب؛ فبعد اسم منصوب تأتي «ذا»: «سلاحًا ذا حدين»."));
+        }
+    }
+}
+
+/// Spaces just inside brackets around Arabic text: «( كلمة )» → «(كلمة)».
+fn bracket_spaces(chars: &[char], out: &mut Vec<Problem>) {
+    for i in 0..chars.len() {
+        match chars[i] {
+            '(' | '«' | '[' if chars.get(i + 1) == Some(&' ') => {
+                let mut j = i + 1;
+                while chars.get(j) == Some(&' ') {
+                    j += 1;
+                }
+                if chars.get(j).is_some_and(|c| is_arabic_letter(*c)) {
+                    out.push(problem(i, j, chars[i].to_string(), "لا تُترك مسافة بعد القوس الافتتاحي."));
+                }
+            }
+            ')' | '»' | ']' if i > 0 && chars[i - 1] == ' ' => {
+                let mut j = i;
+                while j > 0 && chars[j - 1] == ' ' {
+                    j -= 1;
+                }
+                if arabic_before(chars, j) {
+                    out.push(problem(j, i + 1, chars[i].to_string(), "لا تُترك مسافة قبل القوس الختامي."));
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// A full stop between two Arabic words with no space after it: «اختيارها.ومن» → «اختيارها. ومن».
+/// Not after a one-letter abbreviation (د. ق.م) and not in web addresses (فهرس.نت).
+fn space_after_full_stop(chars: &[char], ws: &[Word], out: &mut Vec<Problem>) {
+    const WEB: [&str; 6] = ["نت", "كوم", "أورغ", "اورغ", "إنفو", "نيوز"];
+    for pair in ws.windows(2) {
+        let (a, b) = (&pair[0], &pair[1]);
+        if b.from == a.to + 1 && chars[a.to] == '.' && a.bare.chars().count() >= 2 && !WEB.contains(&b.bare.as_str()) {
+            out.push(problem(a.to, a.to + 1, ". ", "تُترك مسافة بعد النقطة."));
+        }
+    }
+}
+
 /// All rule findings in a paragraph, as character offsets.
 pub fn check(text: &str, dict: &Dictionary, listed: &HashSet<String>) -> Vec<Problem> {
     let chars: Vec<char> = text.chars().collect();
@@ -357,6 +460,10 @@ pub fn check(text: &str, dict: &Dictionary, listed: &HashSet<String>) -> Vec<Pro
     hadha_feminine(&chars, &ws, &mut out);
     kana_predicate(&chars, &ws, dict, &mut out);
     detached_waw(&chars, &ws, &mut out);
+    number_gender(&chars, &ws, &mut out);
+    five_nouns(&chars, &ws, &mut out);
+    bracket_spaces(&chars, &mut out);
+    space_after_full_stop(&chars, &ws, &mut out);
     out
 }
 
@@ -413,6 +520,15 @@ mod tests {
         one(&d, "أصبح الوضع خطير جدا.", "خطير", "خطيرًا");
         one(&d, "ليس الأمر سهل، لكنه ممكن.", "سهل", "سهلًا");
         one(&d, "اشتريت الخبز و الحليب.", "و الحليب", "والحليب");
+        one(&d, "عاش هناك أربعة سنوات.", "أربعة", "أربع");
+        one(&d, "زرت خمسة جامعات وثلاثة شركات.", "خمسة", "خمس");
+        one(&d, "زرت خمسة جامعات وثلاثة شركات.", "وثلاثة", "وثلاث");
+        one(&d, "يعد سلاحا ذو حدين.", "ذو", "ذا");
+        one(&d, "سلمت على أبو محمد.", "أبو", "أبي");
+        one(&d, "تحدثت مع رجل من ذو الخبرة.", "ذو", "ذي");
+        one(&d, "قرأت الكتاب ( الجديد ) أمس.", "( ", "(");
+        one(&d, "قرأت الكتاب ( الجديد ) أمس.", " )", ")");
+        one(&d, "انتهى الدرس.بدأ الامتحان.", ".", ". ");
     }
 
     #[test]
@@ -431,6 +547,10 @@ mod tests {
             "كان الطالب يدرس. أصبح الولد أكبر. كانت الطالبات مجتهدات. كان الفائزون.",
             "في ظل الخلافة العباسية، وكان التحليل النصي.",
             "إذا كانت س و ص عددين، فإن و (2) صحيحة.",
+            "عاش أربع سنوات، وفي ستة اتحادات وأربعة مجلدات وستة مستشفيات وثلاثة كتب.",
+            "وابنهما ذو الخمسة أعوام، وسافر إلى أبو ظبي، وسلمت على أبي محمد.",
+            "زرت موقع فهرس.نت، وولد سنة 50 ق.م، وقال د.أحمد.",
+            "الكتاب (الجديد) و«القديم» [المرجع].",
             "لا لا، لم أقصد ذلك.",
             "قال إن الامتحان صعب.",
             "يجب أن يذهب الطلاب إلى المدرسة.",
@@ -448,55 +568,36 @@ mod tests {
         }
     }
 
-    /// The gate: no false alarms on clean Arabic. Needs the corpus (Arabic Wikipedia text, not in
-    /// the repo; see research/arabic-rules.md): QALAM_TEST_ARABIC_CORPUS=<file> cargo test --release
-    /// clean_corpus -- --nocapture. Wikipedia has real mistakes of its own; each finding below was
-    /// checked by hand (the flagged text, and a few words around it), and anything else fails.
-    const REVIEWED: &[(&str, &str)] = &[
-        // Tuning set: 4 articles, 31,828 words.
-        (" .", "كأداة للتعريف ."),
-        ("أن", "يقولون أن من وضعه"),
-        ("أنه", "يقولون أنه ابن عاصم"),
-        (" .", "العربية الفصحى ."),
-        ("الصالات الصالات", "الصالات الصالات"),
-        ("عن عن", "المقريزي عن عن"),
-        (" ؛", "مكترث ؛"),
-        // Unseen set: 20 articles, 96,496 words.
-        (" .", "في إنجلترا ."),
-        ("أن", "عندما نقول أن"),
-        (" ،", "تاريخ البشرية ،"),
-        (" ،", "استكشافية مصرية ،"),
-        ("أنه", "وقال أنه لا"),
-        ("أن", "الذي قال أن بريطانيا"),
-        (" ،", "منتصف الأطلسي ،"),
-        ("العالم العالم", "انحاء العالم العالم"),
-        ("،", "قرب دمشق،أع"),
-        ("الشارع الشارع", "وينصّفها الشارع الشارع"),
-        (" ؛", "دمشق ؛ الأسطورة"),
-        (" ،", "والعدد لإقليدس ،"),
-        ("أنها", "فقال أنها"),
-        (" ،", "إلى بانيها ،"),
-        (" .", "من النهر ."),
-        ("العراقيون", "لدى العراقيون"),
-        (" .", "ونادي المنصور ."),
-        ("و المفضليات", "اختيارها.و المفضليات"),
-        ("و في", "و في العصر الفاطمي"),
-        ("و مدينة", "الشام و مدينة الياسمين"),
-        ("و دير", "دجلة، و دير للنصارى"),
-    ];
+    /// The gate: no false alarms on clean Arabic. Needs a test text (Arabic Wikipedia and Wikinews,
+    /// not in the repo; see research/arabic-rules.md): QALAM_TEST_ARABIC_CORPUS=<file> cargo test
+    /// --release clean_corpus -- --nocapture. The texts have real mistakes of their own; each one
+    /// found was checked by hand and listed in tests/arabic-reviewed.tsv. Anything else fails.
+    /// Real mistakes in the test texts, each checked by hand: flagged text, then a stretch of
+    /// the text around it.
+    fn reviewed() -> Vec<(String, String)> {
+        include_str!("../tests/arabic-reviewed.tsv")
+            .lines()
+            .filter(|l| !l.starts_with('#'))
+            .filter_map(|l| {
+                let mut cols = l.split('\t');
+                Some((cols.next()?.to_string(), cols.next()?.to_string()))
+            })
+            .collect()
+    }
 
     #[test]
     fn clean_corpus() {
         let Ok(path) = std::env::var("QALAM_TEST_ARABIC_CORPUS") else { return };
         let d = dict();
         let text = std::fs::read_to_string(path).unwrap();
+        let known = reviewed();
         let mut found = Vec::new();
         for paragraph in text.lines() {
             let chars: Vec<char> = paragraph.chars().collect();
             for p in check(paragraph, &d.dict, &d.listed) {
                 let ctx: String = chars[p.from.saturating_sub(25)..(p.to + 20).min(chars.len())].iter().collect();
                 let bad: String = chars[p.from..p.to].iter().collect();
-                let reviewed = REVIEWED.iter().any(|(b, around)| *b == bad && ctx.contains(around));
+                let reviewed = known.iter().any(|(b, around)| *b == bad && ctx.contains(around.as_str()));
                 println!("{} «{bad}» → {:?}   …{ctx}…", if reviewed { "ok  " } else { "FLAG" }, p.replacements);
                 if !reviewed {
                     found.push(bad);
