@@ -1150,6 +1150,14 @@ $("fix-spelling").addEventListener("click", async () => {
 // ---- Readability (status bar): grade level for English, sentence length for Arabic ----
 const readabilityButton = $<HTMLButtonElement>("readability");
 let readabilityTimer: number | undefined;
+
+/** A count of words in correct Arabic: كلمة واحدة, كلمتان, 3–10 كلمات, 11+ كلمة. */
+function arabicWords(n: number): string {
+  if (n === 1) return "كلمة واحدة";
+  if (n === 2) return "كلمتان";
+  return n >= 3 && n <= 10 ? `${n} كلمات` : `${n} كلمة`;
+}
+
 function updateReadability() {
   clearTimeout(readabilityTimer);
   readabilityTimer = window.setTimeout(() => {
@@ -1157,7 +1165,7 @@ function updateReadability() {
     readabilityButton.hidden = !r;
     if (!r) return;
     const mark = longSentencesOn(view.state) ? " ●" : "";
-    readabilityButton.textContent = r.language === "en" ? `Grade ${r.value} · ${r.label}${mark}` : `${r.value} كلمة للجملة · ${r.label}${mark}`;
+    readabilityButton.textContent = r.language === "en" ? `Grade ${r.value} · ${r.label}${mark}` : `${arabicWords(r.value)} للجملة · ${r.label}${mark}`;
   }, 250);
 }
 readabilityButton.addEventListener("click", () => {
