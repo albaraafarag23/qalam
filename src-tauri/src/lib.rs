@@ -1,3 +1,4 @@
+mod arabic_rules;
 mod claude;
 mod grammar;
 mod memory;

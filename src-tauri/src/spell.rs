@@ -27,6 +27,8 @@ pub struct Spellchecker(Mutex<Option<Checker>>);
 
 pub struct Checker {
     arabic: Dictionary,
+    /// For the Arabic grammar rules: words in ون listed as dictionary entries of their own.
+    arabic_listed: std::collections::HashSet<String>,
     american: Dictionary,
     british: Dictionary,
     grammar: Grammar,
@@ -171,7 +173,9 @@ fn tokens(text: &str) -> Vec<Token<'_>> {
 impl Checker {
     fn load(dir: &PathBuf, personal: PathBuf) -> Result<Self, String> {
         let read = |name: &str| std::fs::read_to_string(dir.join(name)).map_err(|e| format!("Couldn't read {name}: {e}"));
-        let arabic = Dictionary::new(&read("ar.aff")?, &read("ar.dic")?).map_err(|e| format!("Arabic dictionary: {e}"))?;
+        let arabic_dic = read("ar.dic")?;
+        let arabic = Dictionary::new(&read("ar.aff")?, &arabic_dic).map_err(|e| format!("Arabic dictionary: {e}"))?;
+        let arabic_listed = crate::arabic_rules::listed_on_words(&arabic_dic);
         let american = Dictionary::new(&read("en_US.aff")?, &read("en_US.dic")?).map_err(|e| format!("American English dictionary: {e}"))?;
         let british = Dictionary::new(&read("en_GB.aff")?, &read("en_GB.dic")?).map_err(|e| format!("British English dictionary: {e}"))?;
         let mut grammar = Grammar::new(&read("en-learner.txt")?);
@@ -185,7 +189,7 @@ impl Checker {
                 Some((strip_marks(wrong.trim()), (right.trim().to_string(), why.trim().to_string())))
             })
             .collect();
-        let mut checker = Checker { arabic, american, british, grammar, mistakes, personal };
+        let mut checker = Checker { arabic, arabic_listed, american, british, grammar, mistakes, personal };
         if let Ok(words) = std::fs::read_to_string(&checker.personal) {
             for word in words.lines().map(str::trim).filter(|w| !w.is_empty()) {
                 checker.learn(word);
@@ -217,7 +221,8 @@ impl Checker {
             .filter(|t| !self.is_correct(t.text, t.script, english))
             .map(|t| Issue { from: t.from, to: t.to, kind: "spelling", message: None, replacements: vec![] })
             .collect();
-        let problems = self.grammar.check(paragraph, english);
+        let mut problems = self.grammar.check(paragraph, english);
+        problems.extend(crate::arabic_rules::check(paragraph, &self.arabic, &self.arabic_listed));
         if !problems.is_empty() {
             // Grammar positions count characters; JavaScript counts UTF-16 units.
             let mut utf16 = Vec::with_capacity(paragraph.len() + 1);

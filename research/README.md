@@ -6,6 +6,7 @@ How other writing tools solve problems Qalam also has. **We learn techniques; we
 | --- | --- |
 | [qalam-approach.md](qalam-approach.md) | **Start here:** the strengths of all three studies combined into Qalam's design |
 | [spellcheck.md](spellcheck.md) | Which engine and dictionaries to use for Arabic and English, measured, plus the plan |
+| [arabic-rules.md](arabic-rules.md) | Qalam's own Arabic grammar rules, and the gate each one passes (0 false alarms in 128k words) |
 | [languagetool-arabic.md](languagetool-arabic.md) | Would LanguageTool make Qalam's Arabic grammar better? Tested: no; what to do instead |
 | [english.md](english.md) | English grammar (Harper vs LanguageTool vs Grammarly) and British spelling, measured |
 | [grammarly.md](grammarly.md) | How Grammarly draws and maintains live underlines |
