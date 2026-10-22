@@ -105,7 +105,7 @@ body { -webkit-user-select: none; user-select: none; }
 .brand-ar { color: var(--accent); margin-inline-start: 4px; }
 /* In a narrow window the toolbar needs the room (the Arabic tools are wide): just «قلم». */
 @media (max-width: 1180px) { .brand-en { display: none; } .brand-ar { margin-inline-start: 0; } }
-.tools { display: flex; align-items: center; gap: 3px; }
+.tools { display: flex; align-items: center; gap: 3px; min-height: 36px; } /* as tall as the حركات buttons, so showing them doesn't move anything */
 .tools button {
   min-width: 34px;
   height: 30px;
@@ -137,11 +137,12 @@ body { -webkit-user-select: none; user-select: none; }
    each drawing on its ink (--dy), so marks above and below the letter both fit. */
 .tools button.haraka {
   min-width: 30px;
+  height: 36px; /* room for marks above (بٌ) and below (بٍ) the letter */
   padding: 0 4px;
   font-family: var(--arabic-font), serif;
   font-size: 15px;
 }
-.haraka .glyph { display: block; line-height: 30px; transform: translateY(var(--dy, 0)); }
+.haraka .glyph { display: block; line-height: 36px; transform: translateY(var(--dy, 0)); }
 .tools button.active, .tools button.active:hover { background: var(--accent); color: var(--paper); }
 .sep { width: 1px; height: 18px; background: var(--rule); margin: 0 6px; }
 
@@ -188,10 +189,11 @@ body { -webkit-user-select: none; user-select: none; }
 }
 
 .tools button.tashkeel {
+  height: 36px;
   box-shadow: inset 0 0 0 1px var(--accent), var(--glass-shadow);
   font-family: var(--arabic-font), serif;
   font-size: 17px;
-  line-height: 26px;
+  line-height: 32px;
   padding: 0 12px;
   color: var(--accent);
 }
@@ -356,6 +358,12 @@ button.primary, button.primary:hover { background: var(--accent); color: var(--p
 .doc-status:empty { display: none; }
 .doc-status.is-dirty::before { content: "• "; color: var(--accent); }
 @media (prefers-reduced-motion: reduce) { .file-menu { animation: none; } }
+
+/* ---- Images ---- */
+/* In the text like in Word, never wider than the page. */
+.ProseMirror img { max-width: 100%; height: auto; vertical-align: bottom; border-radius: 2px; }
+.ProseMirror img.ProseMirror-selectednode { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tools button svg { display: block; margin: auto; }
 
 /* ---- Spellcheck ---- */
 /* A wavy line under the whole word, set low enough to clear Arabic descenders (ي ر و ن).

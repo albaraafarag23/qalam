@@ -128,6 +128,35 @@ pub fn write_document_base64(path: String, base64: String) -> Result<(), String>
     write_atomically(Path::new(&path), bytes)
 }
 
+/// Images are kept inside the document, so it stays one self-contained file.
+const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
+
+/// Shows an Open dialog for an image and returns it as a data URL, ready to show and to save
+/// with the document. None when the writer cancels.
+#[tauri::command]
+pub async fn pick_image(app: AppHandle, current: Option<String>) -> Result<Option<String>, String> {
+    let mut dialog = app.dialog().file().set_title("Insert image · إدراج صورة");
+    if let Some(folder) = current.as_deref().and_then(|p| Path::new(p).parent()).map(Path::to_path_buf).or_else(|| app.path().picture_dir().ok()) {
+        dialog = dialog.set_directory(folder);
+    }
+    let Some(file) = dialog.add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "bmp"]).blocking_pick_file() else {
+        return Ok(None);
+    };
+    let path = file.into_path().map_err(|e| e.to_string())?;
+    let bytes = std::fs::read(&path).map_err(|e| format!("Couldn't open {}: {e}", name_of(&path)))?;
+    if bytes.len() > MAX_IMAGE_BYTES {
+        return Err(format!("{} is larger than 20 MB. Please use a smaller image.", name_of(&path)));
+    }
+    let mime = match path.extension().and_then(|e| e.to_str()).map(str::to_lowercase).as_deref() {
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("bmp") => "image/bmp",
+        _ => "image/png",
+    };
+    Ok(Some(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(&bytes))))
+}
+
 /// A file given on the command line, as when a .qalam file is double-clicked.
 #[tauri::command]
 pub fn startup_document() -> Option<String> {

@@ -117,9 +117,9 @@ export async function fromDocx(schema: Schema, base64: string): Promise<{ doc: P
     },
   );
   const html = new DOMParser().parseFromString(`<body>${result.value}</body>`, "text/html");
-  // Images and tables aren't in Qalam yet (their text is kept as plain paragraphs), so saving
-  // over such a file would lose them: the caller saves a copy instead.
-  const lossy = !!html.body.querySelector("img, table");
+  // Tables aren't in Qalam yet (their text is kept as plain paragraphs), so saving over such a
+  // file would lose them: the caller saves a copy instead. Images come in as images.
+  const lossy = !!html.body.querySelector("table");
   return { doc: PMDOMParser.fromSchema(schema).parse(html.body), lossy };
 }
 
@@ -129,16 +129,68 @@ export interface DocxOptions {
   latinFont: string;
 }
 
+/** The widest an image may be in Word: the text width of an A4 page with normal margins. */
+const MAX_IMAGE_WIDTH = 600;
+
+interface PreparedImage { type: "png" | "jpg" | "gif" | "bmp"; data: Uint8Array; width: number; height: number }
+
+/** An image ready for Word: its pixel size (shrunk to fit the page) and a format Word reads
+    (WebP and others are converted to PNG). */
+async function prepareImage(src: string): Promise<PreparedImage | null> {
+  const img = new Image();
+  img.src = src;
+  try {
+    await img.decode();
+  } catch {
+    return null;
+  }
+  const scale = Math.min(1, MAX_IMAGE_WIDTH / img.naturalWidth);
+  const width = Math.round(img.naturalWidth * scale);
+  const height = Math.round(img.naturalHeight * scale);
+  const mime = /^data:(image\/[a-z+]+);base64,/.exec(src)?.[1];
+  const native = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/bmp": "bmp" } as const;
+  if (mime && mime in native) {
+    return { type: native[mime as keyof typeof native], data: base64ToBytes(src.slice(src.indexOf(",") + 1)), width, height };
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  canvas.getContext("2d")!.drawImage(img, 0, 0);
+  const png = canvas.toDataURL("image/png");
+  return { type: "png", data: base64ToBytes(png.slice(png.indexOf(",") + 1)), width, height };
+}
+
 export async function toDocx(doc: PMNode, options: DocxOptions): Promise<string> {
   const docx = await import("docx");
-  const { Document, Packer, Paragraph, TextRun, HeadingLevel, LevelFormat, AlignmentType } = docx;
+  const { Document, Packer, Paragraph, TextRun, ImageRun, HeadingLevel, LevelFormat, AlignmentType } = docx;
   const font = { ascii: options.latinFont, hAnsi: options.latinFont, cs: options.arabicFont };
 
+  const images = new Map<string, PreparedImage | null>();
+  const sources: string[] = [];
+  doc.descendants((node) => {
+    if (node.type.name === "image") sources.push(node.attrs.src);
+  });
+  for (const src of sources) if (!images.has(src)) images.set(src, await prepareImage(src));
+
   const runs = (block: PMNode) => {
-    const out: InstanceType<typeof TextRun>[] = [];
+    const out: (InstanceType<typeof TextRun> | InstanceType<typeof ImageRun>)[] = [];
     block.forEach((child) => {
       if (child.type.name === "hard_break") {
         out.push(new TextRun({ break: 1 }));
+        return;
+      }
+      if (child.type.name === "image") {
+        const image = images.get(child.attrs.src);
+        if (image) {
+          out.push(
+            new ImageRun({
+              type: image.type,
+              data: image.data,
+              transformation: { width: image.width, height: image.height },
+              ...(child.attrs.alt ? { altText: { name: child.attrs.alt, description: child.attrs.alt, title: child.attrs.alt } } : {}),
+            }),
+          );
+        }
         return;
       }
       if (!child.isText) return;

@@ -18,6 +18,18 @@ pub fn run() {
         .manage(spell::Spellchecker::default())
         .setup(|app| {
             spell::preload(app.handle());
+            // Linux: a sharp icon for the title bar, task bar and app switcher (Tauri's default
+            // is the first PNG it finds, which is small and gets blurry when scaled up). The
+            // icon is stored as raw 256×256 RGBA pixels (made from icons/icon.png), so no image
+            // decoder is needed.
+            #[cfg(target_os = "linux")]
+            {
+                use tauri::Manager;
+                if let Some(window) = app.get_webview_window("main") {
+                    let pixels = include_bytes!("../icons/window-icon-256.rgba");
+                    let _ = window.set_icon(tauri::image::Image::new(pixels, 256, 256));
+                }
+            }
             #[cfg(windows)]
             {
                 use tauri::Manager;
@@ -42,6 +54,7 @@ pub fn run() {
             documents::choose_save_path,
             documents::write_document,
             documents::write_document_base64,
+            documents::pick_image,
             documents::startup_document,
             documents::save_backup,
             documents::load_backup,

@@ -137,6 +137,20 @@ const view = new EditorView(document.getElementById("page")!, {
     lastTypedDirection = textDirection(text) ?? lastTypedDirection;
     return false;
   },
+  // Images pasted or dragged in are kept inside the document.
+  handlePaste(view, event) {
+    const files = imageFiles(event.clipboardData?.files);
+    if (!files.length) return false;
+    insertImageFiles(files, view.state.selection.from);
+    return true;
+  },
+  handleDrop(view, event) {
+    const files = imageFiles((event as DragEvent).dataTransfer?.files);
+    if (!files.length) return false;
+    const at = view.posAtCoords({ left: (event as DragEvent).clientX, top: (event as DragEvent).clientY });
+    insertImageFiles(files, at?.pos ?? view.state.selection.from);
+    return true;
+  },
   dispatchTransaction(tr) {
     if (tr.selectionSet && !tr.docChanged) lastTypedDirection = null; // moved: go by the paragraph again
     for (const job of punctuationJobs) job.pos = tr.mapping.map(job.pos);
@@ -679,6 +693,52 @@ spellcheckButton.addEventListener("click", () => {
   view.focus();
 });
 
+// ---- Images ----
+// Stored in the document as data URLs, so a .qalam file is complete on its own.
+const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+
+function imageFiles(list: FileList | null | undefined): File[] {
+  return [...(list ?? [])].filter((f) => f.type.startsWith("image/"));
+}
+
+function readAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+function insertImage(src: string, at?: number) {
+  const image = schema.nodes.image.create({ src });
+  const tr = at === undefined ? view.state.tr.replaceSelectionWith(image) : view.state.tr.insert(at, image);
+  view.dispatch(tr.scrollIntoView());
+  view.focus();
+}
+
+async function insertImageFiles(files: File[], at: number) {
+  for (const file of files) {
+    if (file.size > MAX_IMAGE_BYTES) {
+      showDocState(`${file.name} is larger than 20 MB. Please use a smaller image.`);
+      continue;
+    }
+    insertImage(await readAsDataUrl(file), at);
+    at += 1; // the next one goes after it
+  }
+}
+
+const insertImageButton = $<HTMLButtonElement>("insert-image");
+insertImageButton.addEventListener("mousedown", (e) => e.preventDefault()); // keep the cursor
+insertImageButton.addEventListener("click", async () => {
+  try {
+    const src = await invoke<string | null>("pick_image", { current: docPath });
+    if (src) insertImage(src);
+  } catch (e) {
+    showDocState(String(e).replace(/^Error: /, ""));
+  }
+});
+
 // ---- Deep check with Claude (opt-in) ----
 // For the grammar the built-in checks can't judge (agreement, كان الجو جميل اليوم, الذي/التي...).
 // The writer asks for it on the paragraph at the cursor or on a selection; Claude's suggestions
@@ -848,7 +908,7 @@ async function parseDocument(opened: OpenedDocument): Promise<{ doc: PMNode; los
 async function showOpened(opened: OpenedDocument) {
   const { doc, lossy } = await parseDocument(opened);
   loadDocument(doc, opened, false, lossy);
-  if (lossy) showDocState("Tables and images in this Word file aren't shown yet. Saving will make a copy, so the original stays as it was.");
+  if (lossy) showDocState("Tables in this Word file aren't shown yet. Saving will make a copy, so the original stays as it was.");
 }
 
 // Word font names for the Arabic fonts Qalam bundles (Word falls back if one isn't installed).
@@ -1001,6 +1061,11 @@ function isDark() {
 function showThemeButton() {
   themeButton.textContent = isDark() ? "☀" : "☾";
   themeButton.title = isDark() ? "Light mode" : "Dark mode";
+  // The window's own title bar follows too (otherwise it stays light above a dark page).
+  const chosen = document.documentElement.dataset.theme;
+  try {
+    getCurrentWindow().setTheme(chosen === "dark" || chosen === "light" ? chosen : null).catch(() => {});
+  } catch {} // outside Tauri (tests in a browser)
 }
 try {
   const saved = localStorage.getItem("qalam.theme");
